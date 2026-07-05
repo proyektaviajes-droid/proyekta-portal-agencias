@@ -1,0 +1,6 @@
+.env
+backups/
+generated/
+node_modules/
+*.log
+*.zip

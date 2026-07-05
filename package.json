@@ -1,0 +1,14 @@
+{
+  "name": "proyekta-portal-agencias",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "bootstrap:admin": "node scripts/bootstrap-admin.mjs",
+    "test": "node tests/security.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

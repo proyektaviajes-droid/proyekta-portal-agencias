@@ -1,0 +1,86 @@
+:root {
+  --ink: #18211f;
+  --muted: #66736f;
+  --line: #dde5e1;
+  --panel: #ffffff;
+  --bg: #f4f7f5;
+  --brand: #194d3f;
+  --brand-2: #c9a45c;
+  --danger: #9f2f2f;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); background: var(--bg); }
+button, input, select, textarea { font: inherit; }
+.topbar {
+  height: 64px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 22px; background: #fff; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 10;
+}
+.topbar strong { display: block; letter-spacing: .08em; }
+.topbar span { color: var(--muted); font-size: 13px; }
+.app { max-width: 1320px; margin: 0 auto; padding: 24px; }
+.login-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 8vh; }
+.panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 22px; box-shadow: 0 10px 24px rgba(24,33,31,.05);
+}
+.narrow { max-width: 520px; margin: 8vh auto; }
+h1 { margin: 0 0 8px; font-size: 24px; }
+h2 { margin: 0 0 14px; font-size: 20px; }
+h3 { margin: 0 0 10px; font-size: 16px; }
+.muted { color: var(--muted); }
+label { display: grid; gap: 6px; margin: 12px 0; color: #2d3935; font-weight: 600; }
+input, select, textarea {
+  width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;
+  background: #fff; color: var(--ink);
+}
+textarea { min-height: 88px; resize: vertical; }
+button {
+  border: 0; border-radius: 6px; padding: 10px 14px; background: var(--brand);
+  color: #fff; cursor: pointer; font-weight: 700;
+}
+.button-link {
+  display: inline-block; border-radius: 6px; padding: 10px 14px; background: var(--brand);
+  color: #fff; text-decoration: none; font-weight: 700;
+}
+button:hover { filter: brightness(.96); }
+.ghost { background: transparent; color: var(--brand); border: 1px solid var(--line); }
+.button-light {
+  display: inline-block; border-radius: 6px; padding: 10px 14px;
+  text-decoration: none; font-weight: 700;
+}
+.danger { color: var(--danger); }
+.hidden { display: none !important; }
+.layout { display: grid; grid-template-columns: 220px 1fr; gap: 18px; align-items: start; }
+.side { display: grid; gap: 8px; position: sticky; top: 84px; }
+.side button, .side a {
+  text-align: left; background: #fff; color: var(--ink); border: 1px solid var(--line);
+  border-radius: 6px; padding: 10px 14px; text-decoration: none; font-weight: 700;
+}
+.side button.active { background: var(--brand); color: #fff; }
+.content { min-width: 0; }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.card {
+  background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px;
+}
+.metric { font-size: 30px; font-weight: 800; color: var(--brand); }
+.toolbar { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.table-wrap { overflow-x: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+table { width: 100%; border-collapse: collapse; min-width: 760px; }
+th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th { background: #f8faf8; color: #33413d; font-size: 13px; }
+.status { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #eef4f1; color: var(--brand); font-size: 12px; font-weight: 700; }
+.notice { border-left: 4px solid var(--brand-2); background: #fffaf0; padding: 12px; border-radius: 6px; margin: 12px 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+.full { grid-column: 1 / -1; }
+
+@media (max-width: 860px) {
+  .app { padding: 14px; }
+  .login-grid, .layout, .grid, .grid.two, .form-grid { grid-template-columns: 1fr; }
+  .side { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .topbar { height: auto; min-height: 62px; gap: 10px; }
+}

@@ -1,0 +1,30 @@
+CORREO OPERATIVO DEL PORTAL
+
+Configuracion recomendada ahora:
+
+FROM:
+PROYEKTA VIAJES <jon@proyektaviajes.es>
+
+REPLY-TO:
+reservas@proyektaviajes.es
+
+Por que:
+- jon@proyektaviajes.es ya puede enviar desde Gmail.
+- reservas@proyektaviajes.es ya llega a un Gmail.
+- Si una agencia responde a una invitacion o aviso, la respuesta entra en reservas.
+
+Como aplicarlo al portal:
+1. Ejecuta 06_configurar_correo_operativo.bat.
+2. Reinicia el portal si estaba abierto.
+3. Entra como administrador.
+4. Crea una agencia.
+5. Pulsa Generar invitacion.
+6. El portal copiara un mensaje listo para pegar en Gmail.
+
+De momento el portal NO envia correos automaticos reales.
+Genera el mensaje y lo deja registrado en Supabase, tabla notifications.
+
+Siguiente paso profesional:
+- Conectar un proveedor de correo transaccional.
+- Opciones: Resend, Brevo, SendGrid, SMTP Nominalia o Gmail con contrasena de aplicacion.
+- Recomendacion futura: Resend o Brevo con dominio verificado.

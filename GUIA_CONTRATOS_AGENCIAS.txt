@@ -1,0 +1,58 @@
+PROYEKTA VIAJES - CONTROL DE CONTRATOS DE AGENCIA
+
+Objetivo
+--------
+El portal distingue entre:
+
+1. La agencia declara que tiene el contrato firmado.
+2. PROYEKTA recibe el documento o firma online.
+3. PROYEKTA verifica el contrato.
+4. PROYEKTA imprime, firma, sella, escanea y envia la copia final a la agencia.
+
+Estados principales
+-------------------
+pendiente
+  No consta contrato firmado.
+
+declarado_por_agencia
+  La agencia o el administrador ha indicado que el contrato esta firmado, pero PROYEKTA aun no lo ha recibido/verificado.
+
+recibido_pendiente_revision
+  El contrato ha llegado al portal o se ha marcado como recibido. Falta revisarlo.
+
+verificado
+  PROYEKTA ha comprobado que el contrato es correcto.
+
+rechazado
+  El contrato tiene un problema y debe corregirse.
+
+Como usarlo
+-----------
+1. Entra como administrador.
+2. Ve a Agencias.
+3. En cada agencia veras el estado de contrato.
+4. Usa:
+   - Contrato recibido: si ya te llego firmado por la agencia.
+   - Verificar contrato: si lo has revisado y esta correcto.
+   - Rechazar contrato: si faltan datos, firma, sello o hay un error.
+
+Formulario rellenable
+---------------------
+La pagina /contrato-agencias.html permite que la agencia rellene y firme dentro del portal.
+
+Cuando una agencia lo envia:
+- se genera un archivo en generated/contracts
+- se intenta vincular automaticamente a la agencia por email principal o NIF/CIF
+- si coincide, la agencia queda como recibido_pendiente_revision
+
+Importante
+----------
+El contrato no debe considerarse final hasta que PROYEKTA lo haya revisado, firmado, sellado y devuelto a la agencia.
+
+Base de datos
+-------------
+Si tu Supabase ya estaba creado antes de esta mejora, ejecuta en Supabase SQL Editor:
+
+db/003_contract_verification.sql
+
+Si creas Supabase desde cero en el futuro, basta con ejecutar db/001_schema.sql y despues el resto de scripts indicados.

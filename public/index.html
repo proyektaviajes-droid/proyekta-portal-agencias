@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PROYEKTA VIAJES - Portal de agencias</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <strong>PROYEKTA VIAJES</strong>
+        <span>Portal privado de agencias</span>
+      </div>
+      <div class="actions">
+        <a class="ghost button-light" href="/contrato-agencias.html" target="_blank">Solicitar acceso</a>
+        <button id="logoutBtn" class="ghost hidden">Cerrar sesion</button>
+      </div>
+    </header>
+
+    <main id="app" class="app"></main>
+
+    <template id="loginTpl">
+      <section class="login-grid">
+        <form class="panel" id="agencyLogin">
+          <h1>Ya tengo acceso</h1>
+          <p class="muted">Si PROYEKTA ya te ha enviado un codigo de agencia y una contrasena, entra aqui.</p>
+          <label>Codigo de agencia<input name="agencyCode" autocomplete="username" placeholder="AG-0001" required></label>
+          <label>Contrasena<input name="password" type="password" autocomplete="current-password" required></label>
+          <button>Entrar como agencia</button>
+        </form>
+        <form class="panel" id="adminLogin">
+          <h1>Administracion</h1>
+          <p class="muted">Acceso interno de PROYEKTA VIAJES.</p>
+          <label>Correo<input name="email" type="email" autocomplete="username" required></label>
+          <label>Contrasena<input name="password" type="password" autocomplete="current-password" required></label>
+          <button>Entrar como administrador</button>
+        </form>
+        <section class="panel full">
+          <h1>Quiero solicitar acceso como agencia</h1>
+          <p class="muted">Primero rellena los datos de tu agencia y firma el contrato. PROYEKTA revisara la solicitud y, si todo esta correcto, te enviara tu codigo de agencia y el enlace para crear la contrasena.</p>
+          <div class="actions">
+            <a class="ghost button-light" href="/dossiers/PROYEKTA_Dossier_Colaboracion_Agencias_2027_REVISADO.pdf" download>Descargar dossier</a>
+            <a class="button-link" href="/contrato-agencias.html" target="_blank">Solicitar alta y firmar contrato</a>
+            <a class="ghost button-light" href="/contracts/Contrato_colaboracion_agencias_Proyekta_Viajes_CORREGIDO.pdf" target="_blank">Descargar PDF</a>
+          </div>
+        </section>
+      </section>
+    </template>
+
+    <template id="setPasswordTpl">
+      <form class="panel narrow" id="setPasswordForm">
+        <h1>Crear contrasena</h1>
+        <p class="muted">La contrasena debe tener al menos 10 caracteres.</p>
+        <label>Nueva contrasena<input name="password" type="password" minlength="10" required></label>
+        <button>Guardar contrasena</button>
+      </form>
+    </template>
+
+    <template id="adminTpl">
+      <section class="layout">
+        <nav class="side">
+          <button data-view="adminAgencies">Agencias</button>
+          <button data-view="adminDepartures">Salidas</button>
+          <button data-view="adminReservations">Reservas</button>
+          <button data-view="adminPayments">Pagos</button>
+          <button data-view="adminControl">Control económico</button>
+          <button data-view="adminIncidents">Incidencias</button>
+          <button data-view="adminExports">Exportar</button>
+          <a href="/contrato-agencias.html" target="_blank">Contrato agencias</a>
+        </nav>
+        <section class="content">
+          <div id="view"></div>
+        </section>
+      </section>
+    </template>
+
+    <template id="agencyTpl">
+      <section class="layout">
+        <nav class="side">
+          <button data-view="agencyDashboard">Panel</button>
+          <button data-view="agencyNewReservation">Nueva reserva</button>
+          <button data-view="agencyTravellers">Viajeros</button>
+          <button data-view="agencyPayments">Pagos</button>
+          <button data-view="agencyIncidents">Incidencias</button>
+          <a href="/contrato-agencias.html" target="_blank">Contrato agencias</a>
+        </nav>
+        <section class="content">
+          <div id="view"></div>
+        </section>
+      </section>
+    </template>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

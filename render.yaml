@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: proyekta-portal-agencias
+    runtime: node
+    plan: starter
+    buildCommand: ""
+    startCommand: node src/server.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: PUBLIC_BASE_URL
+        value: https://agencias.proyektaviajes.es
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: MAIL_FROM_NAME
+        value: PROYEKTA VIAJES
+      - key: MAIL_FROM_EMAIL
+        value: jon@proyektaviajes.es
+      - key: MAIL_REPLY_TO
+        value: reservas@proyektaviajes.es
+      - key: CONTRACT_NOTIFY_EMAIL
+        value: reservas@proyektaviajes.es
+      - key: RESEND_API_KEY
+        sync: false

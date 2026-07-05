@@ -1,0 +1,44 @@
+GUIA RAPIDA - SUPABASE Y PRIMER ADMINISTRADOR PROYEKTA
+
+1. Crear Supabase:
+   - Ejecuta 00_abrir_supabase.bat.
+   - Inicia sesion.
+   - Crea un proyecto llamado proyekta-portal-agencias.
+
+2. Crear tablas:
+   - Abre SQL Editor.
+   - Ejecuta 00_abrir_sql_del_portal.bat.
+   - Copia TODO el SQL.
+   - Pegalo en Supabase y pulsa Run.
+
+3. Copiar claves:
+   - En Supabase entra en Project Settings > API.
+   - Copia Project URL.
+   - Copia service_role secret key.
+
+4. En esta carpeta:
+   - Ejecuta 01_configurar_admin.bat.
+   - Introduce:
+     * SUPABASE_URL
+     * SUPABASE_SERVICE_ROLE_KEY
+     * Email del administrador
+     * Contrasena del administrador
+
+5. Crear administrador:
+   - Ejecuta 02_crear_administrador.bat.
+   - Si aparece "permission denied for table admin_users":
+     * Ejecuta 00_abrir_sql_permisos_supabase.bat.
+     * Copia todo el SQL.
+     * Pegalo en Supabase SQL Editor.
+     * Pulsa Run.
+     * Vuelve a ejecutar 02_crear_administrador.bat.
+
+6. Abrir el portal:
+   - Ejecuta 03_arrancar_portal.bat.
+   - Entra en http://localhost:4177.
+   - Accede por "Administracion" con el email y contrasena que has puesto.
+
+IMPORTANTE:
+- No compartas el archivo .env.
+- No subas .env a ninguna web ni repositorio.
+- Antes de produccion hay que configurar HTTPS, correo real, backups y politicas finales de documentos.

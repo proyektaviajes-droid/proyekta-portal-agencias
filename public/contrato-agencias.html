@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Contrato agencia - PROYEKTA VIAJES</title>
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+      .contract-page{max-width:980px;margin:0 auto;padding:24px}
+      canvas{width:100%;height:180px;border:1px solid var(--line);border-radius:6px;background:#fff;touch-action:none}
+      .legal-list{padding-left:20px;color:var(--muted)}
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div><strong>PROYEKTA VIAJES</strong><span>Firma de agencia y revision por PROYEKTA</span></div>
+      <a class="button-link" href="/contracts/Contrato_colaboracion_agencias_Proyekta_Viajes_CORREGIDO.pdf" target="_blank">Descargar contrato</a>
+    </header>
+    <main class="contract-page">
+      <form id="contractForm" class="panel form-grid">
+        <div class="full">
+          <h1>Acuerdo de colaboracion comercial</h1>
+          <p class="muted">Rellena los datos de la agencia, revisa el contrato y firma en el recuadro. PROYEKTA lo recibira, lo imprimira, lo firmara, lo sellara y enviara la copia final por correo. Tambien puedes descargar el PDF, firmarlo fuera y enviarlo escaneado a reservas@proyektaviajes.es.</p>
+        </div>
+
+        <h2 class="full">Datos de la agencia</h2>
+        <label>Nombre comercial<input name="commercialName" required></label>
+        <label>Razon social<input name="legalName" required></label>
+        <label>NIF/CIF<input name="taxId" required></label>
+        <label>Registro turistico<input name="tourismRegistry"></label>
+        <label class="full">Domicilio<input name="address" required></label>
+        <label>Codigo postal<input name="postalCode" required></label>
+        <label>Localidad<input name="city" required></label>
+        <label>Provincia<input name="province" required></label>
+        <label>Pais<input name="country" value="Espana" required></label>
+
+        <h2 class="full">Representante</h2>
+        <label>Nombre y apellidos<input name="representativeName" required></label>
+        <label>DNI/NIE<input name="representativeDocument" required></label>
+        <label>Cargo<input name="representativeRole" placeholder="Administrador, gerente..."></label>
+        <label>Email principal<input name="mainEmail" type="email" required></label>
+        <label>Telefono principal<input name="mainPhone" required></label>
+
+        <h2 class="full">Contacto operativo</h2>
+        <label>Persona operativa<input name="operationsContact"></label>
+        <label>Email operativo<input name="operationsEmail" type="email"></label>
+        <label>Telefono incidencias<input name="incidentsPhone"></label>
+        <label>Cuenta bancaria comisiones<input name="commissionBankAccount"></label>
+
+        <h2 class="full">Aceptaciones</h2>
+        <div class="full notice">
+          <p>Antes de firmar, descarga o abre el contrato completo. La firma de este formulario deja constancia de aceptacion por parte de la agencia. El contrato quedara pendiente de firma y sello final de PROYEKTA VIAJES.</p>
+          <ul class="legal-list">
+            <li>Comision general inicial: 10% salvo anexo o producto especifico.</li>
+            <li>Los datos se trataran solo para gestionar la colaboracion, reservas, pagos, incidencias y comisiones.</li>
+            <li>La agencia declara capacidad suficiente para firmar.</li>
+          </ul>
+        </div>
+        <label class="full"><input type="checkbox" name="acceptContract" required> He leido y acepto el contrato completo.</label>
+        <label class="full"><input type="checkbox" name="acceptPrivacy" required> Acepto el tratamiento de datos necesario para la colaboracion.</label>
+        <label class="full"><input type="checkbox" name="acceptAuthority" required> Declaro que tengo capacidad para firmar en nombre de la agencia.</label>
+
+        <h2 class="full">Firma de la agencia</h2>
+        <div class="full">
+          <canvas id="signature" width="900" height="220"></canvas>
+          <div class="actions" style="margin-top:8px"><button type="button" class="ghost" id="clearSignature">Borrar firma</button></div>
+        </div>
+
+        <label class="full">Observaciones<textarea name="observations"></textarea></label>
+
+        <button class="full">Firmar como agencia y enviar a PROYEKTA</button>
+      </form>
+      <div id="result" class="panel hidden"></div>
+    </main>
+    <script src="/contrato-agencias.js" type="module"></script>
+  </body>
+</html>

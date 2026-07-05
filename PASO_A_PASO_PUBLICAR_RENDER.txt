@@ -1,0 +1,113 @@
+PASO A PASO - PUBLICAR PORTAL EN RENDER
+=======================================
+
+Objetivo:
+Que las agencias entren por:
+
+https://agencias.proyektaviajes.es
+
+
+1. Crear servicio en Render
+---------------------------
+
+Entra en:
+https://render.com
+
+Crea un nuevo "Web Service".
+
+Sube o conecta el paquete publicable:
+
+dist_publicacion/proyekta-portal-agencias-publicable_ULTIMO.zip
+
+Configuracion:
+
+Runtime:
+Node
+
+Build command:
+dejar vacio
+
+Start command:
+node src/server.mjs
+
+
+2. Variables de entorno
+-----------------------
+
+Configura estas variables en Render:
+
+NODE_ENV=production
+PORT=10000
+PUBLIC_BASE_URL=https://agencias.proyektaviajes.es
+SUPABASE_URL=tu_url_de_supabase
+SUPABASE_SERVICE_ROLE_KEY=tu_service_role_key
+SESSION_SECRET=un_texto_largo_aleatorio_de_64_caracteres_o_mas
+MAIL_FROM_NAME=PROYEKTA VIAJES
+MAIL_FROM_EMAIL=jon@proyektaviajes.es
+MAIL_REPLY_TO=reservas@proyektaviajes.es
+CONTRACT_NOTIFY_EMAIL=reservas@proyektaviajes.es
+RESEND_API_KEY=
+
+No pegues estas claves en la web publica.
+Solo van en Render, como variables privadas.
+
+
+3. Probar URL temporal
+----------------------
+
+Render te dara una URL temporal tipo:
+
+https://proyekta-portal-agencias.onrender.com
+
+Prueba ahi:
+
+- pantalla de login
+- contrato online
+- descarga de dossier
+- login admin
+
+
+4. Conectar dominio
+-------------------
+
+En Render, añade dominio personalizado:
+
+agencias.proyektaviajes.es
+
+Render te dira que registro DNS crear.
+
+En tu proveedor de dominio, crea el CNAME que indique Render.
+
+Normalmente:
+
+Tipo: CNAME
+Nombre: agencias
+Destino: el dominio que te indique Render
+
+
+5. Cambiar web publica
+----------------------
+
+En www.proyektaviajes.es:
+
+Boton principal:
+Acceso agencias
+
+Enlace:
+https://agencias.proyektaviajes.es
+
+Boton dossier:
+Descargar dossier
+
+Enlace:
+/PROYEKTA_Dossier_Colaboracion_Agencias_2027_REVISADO.pdf
+
+No usar mailto para descargar dossier.
+
+
+6. Ultimo paquete generado
+--------------------------
+
+Usa el ZIP mas reciente dentro de:
+
+dist_publicacion

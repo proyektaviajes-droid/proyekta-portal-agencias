@@ -1,0 +1,105 @@
+PROYEKTA VIAJES - PUBLICAR EL PORTAL DE AGENCIAS
+=================================================
+
+Objetivo real
+-------------
+
+El portal no debe quedarse en localhost. Localhost solo sirve para construir y probar.
+
+La direccion profesional recomendada es:
+
+https://agencias.proyektaviajes.es
+
+La web publica www.proyektaviajes.es debe enlazar a esa direccion.
+
+
+Que hay que publicar
+--------------------
+
+Publica la app Node de esta carpeta:
+
+outputs/38_proyekta_portal_agencias
+
+No publiques:
+
+- .env
+- backups
+- generated
+- archivos zip antiguos
+
+
+Variables necesarias en el hosting
+----------------------------------
+
+PORT
+PUBLIC_BASE_URL=https://agencias.proyektaviajes.es
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+SESSION_SECRET
+MAIL_FROM_NAME=PROYEKTA VIAJES
+MAIL_FROM_EMAIL=jon@proyektaviajes.es
+MAIL_REPLY_TO=reservas@proyektaviajes.es
+CONTRACT_NOTIFY_EMAIL=reservas@proyektaviajes.es
+RESEND_API_KEY
+
+La clave SUPABASE_SERVICE_ROLE_KEY nunca debe aparecer en la web publica ni en codigo frontend.
+
+
+Opcion recomendada facil: Render
+--------------------------------
+
+1. Crea una cuenta en Render.
+2. Crea un "Web Service".
+3. Sube/conecta este proyecto.
+4. Start command:
+
+   node src/server.mjs
+
+5. Añade las variables de entorno anteriores.
+6. Cuando Render te de una URL temporal, prueba el portal.
+7. En dominios personalizados, añade:
+
+   agencias.proyektaviajes.es
+
+8. Render te dira que registro DNS crear.
+
+
+DNS del dominio
+---------------
+
+En el panel donde tienes proyektaviajes.es, crea el registro que te pida Render.
+
+Normalmente sera un CNAME:
+
+Nombre: agencias
+Destino: el dominio que indique Render
+
+
+Web publica
+-----------
+
+En www.proyektaviajes.es añade un boton:
+
+Texto:
+Acceso agencias
+
+Enlace:
+https://agencias.proyektaviajes.es
+
+
+Flujo para agencias
+-------------------
+
+1. Agencia entra en www.proyektaviajes.es.
+2. Pulsa Acceso agencias.
+3. Si no tiene cuenta, solicita alta y firma contrato.
+4. PROYEKTA revisa y verifica contrato.
+5. PROYEKTA genera invitacion.
+6. Agencia crea contraseña.
+7. Agencia entra con codigo AG-0001 y su contraseña.
+
+
+Estado actual
+-------------
+
+El portal esta preparado para publicar, pero aun falta subirlo a un hosting publico y apuntar el subdominio.
