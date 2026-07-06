@@ -176,6 +176,47 @@ async function adminView(view) {
       adminView('adminPayments');
     });
   }
+  if (view === 'adminGestoria') {
+    try {
+      const data = await api('/api/admin/control/summary');
+      target.innerHTML = html`
+        <div class="toolbar"><h2>Gestoria</h2><div class="actions"><button id="newAccountingDoc">Nuevo ingreso/gasto</button><button class="ghost" id="newEntity">Nueva entidad</button></div></div>
+        <div class="grid">
+          ${metric('Ingresos registrados', money(data.accounting?.income || 0))}
+          ${metric('Gastos registrados', money(data.accounting?.expense || 0))}
+          ${metric('Pendiente de cobrar', money(data.accounting?.toCollect || 0))}
+          ${metric('Pendiente de pagar', money(data.accounting?.toPay || 0))}
+        </div>
+        <div id="accountingForm" class="panel hidden">${accountingDocumentForm()}</div>
+        <div id="entityForm" class="panel hidden">${controlEntityForm(data.categories)}</div>
+        ${accountingExportPanel()}
+        <h3>Facturas, recibos y gastos recientes</h3>
+        ${table(['Fecha','Tipo','Tercero','Concepto','Base','IVA','Total','Pagado','Estado','Acciones'], (data.documents || []).map(d => [
+          d.issue_date, d.direction === 'gasto' ? 'Gasto' : 'Ingreso', d.entities?.display_name || '', d.concept,
+          money(d.tax_base), money(d.tax_amount), money(d.total_amount), money(d.paid_amount), badge(d.status), accountingDocActions(d)
+        ]))}
+        <h3>Pendientes</h3>
+        ${table(['Tercero','Tipo','Fecha','Importe','Pagado','Estado'], data.dueItems.map(d => [d.entities?.display_name || '', d.direction, d.due_date, money(d.amount), money(d.paid_amount), badge(d.status)]))}
+        <h3>Entidades recientes</h3>
+        ${table(['Nombre','Email','Telefono','Estado'], data.entities.map(e => [e.display_name, e.main_email || '', e.main_phone || '', badge(e.status)]))}
+      `;
+      document.querySelector('#newAccountingDoc').onclick = () => document.querySelector('#accountingForm').classList.toggle('hidden');
+      document.querySelector('#newEntity').onclick = () => document.querySelector('#entityForm').classList.toggle('hidden');
+      document.querySelector('#createAccountingDoc')?.addEventListener('submit', createAccountingDocument);
+      document.querySelector('#createControlEntity')?.addEventListener('submit', createControlEntity);
+      target.querySelectorAll('[data-accounting-paid]').forEach(btn => btn.onclick = async () => {
+        if (!confirm('Marcar como cobrado/pagado?')) return;
+        await api(`/api/admin/accounting/documents/${btn.dataset.accountingPaid}/paid`, { method: 'PATCH', body: {} });
+        adminView('adminGestoria');
+      });
+    } catch (err) {
+      target.innerHTML = html`
+        <h2>Gestoria</h2>
+        <div class="notice">Esta parte necesita activar la base de datos de control economico. Falta ejecutar <strong>db/004_proyekta_control_core.sql</strong> en Supabase.</div>
+        <p class="muted">${esc(err.message)}</p>
+      `;
+    }
+  }
   if (view === 'adminControl') {
     try {
       const data = await api('/api/admin/control/summary');
@@ -345,7 +386,13 @@ async function createDeparture(e) {
 async function createControlEntity(e) {
   e.preventDefault();
   await api('/api/admin/control/entities', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
-  adminView('adminControl');
+  adminView('adminGestoria');
+}
+
+async function createAccountingDocument(e) {
+  e.preventDefault();
+  await api('/api/admin/accounting/documents', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
+  adminView('adminGestoria');
 }
 
 async function createReservation(e) {
@@ -429,6 +476,45 @@ function controlEntityForm(categories) {
     <label class="full">Notas<textarea name="notes"></textarea></label>
     <button class="full">Crear entidad</button>
   </form>`;
+}
+
+function accountingDocumentForm() {
+  const today = new Date().toISOString().slice(0, 10);
+  return `<form id="createAccountingDoc" class="form-grid">
+    <label>Tipo<select name="direction"><option value="ingreso">Ingreso / factura emitida</option><option value="gasto">Gasto / factura recibida</option></select></label>
+    <label>Fecha<input name="issueDate" type="date" value="${today}" required></label>
+    <label>Vencimiento<input name="dueDate" type="date" value="${today}"></label>
+    <label>Tercero<input name="entityName" placeholder="Cliente, agencia o proveedor" required></label>
+    <label>NIF/CIF<input name="taxId"></label>
+    <label class="full">Concepto<input name="concept" placeholder="Reserva, factura proveedor, comision..." required></label>
+    <label>Base imponible<input name="taxBase" type="number" step="0.01" value="0" required></label>
+    <label>IVA %<input name="taxRatePct" type="number" step="0.01" value="21"></label>
+    <label>Total<input name="totalAmount" type="number" step="0.01" placeholder="Opcional"></label>
+    <label>Estado<select name="status"><option value="">Normal</option><option value="borrador">Borrador</option></select></label>
+    <label class="full">Notas<textarea name="notes"></textarea></label>
+    <button class="full">Guardar para gestoria</button>
+  </form>`;
+}
+
+function accountingExportPanel() {
+  const year = new Date().getFullYear();
+  const quarter = Math.floor(new Date().getMonth() / 3) + 1;
+  return `<div class="panel">
+    <h3>Exportar trimestre para gestoria</h3>
+    <form class="form-grid compact" onsubmit="event.preventDefault(); window.open('/api/admin/accounting/export?year=' + this.year.value + '&quarter=' + this.quarter.value, '_blank')">
+      <label>Año<input name="year" type="number" value="${year}" min="2026" step="1"></label>
+      <label>Trimestre<select name="quarter"><option value="1" ${quarter === 1 ? 'selected' : ''}>T1</option><option value="2" ${quarter === 2 ? 'selected' : ''}>T2</option><option value="3" ${quarter === 3 ? 'selected' : ''}>T3</option><option value="4" ${quarter === 4 ? 'selected' : ''}>T4</option></select></label>
+      <button>Descargar CSV</button>
+    </form>
+  </div>`;
+}
+
+function accountingDocActions(doc) {
+  const buttons = [];
+  if (Number(doc.paid_amount || 0) < Number(doc.total_amount || 0) && !['cancelada','rectificada'].includes(doc.status)) {
+    buttons.push(`<button data-accounting-paid="${doc.id}">${doc.direction === 'gasto' ? 'Marcar pagado' : 'Marcar cobrado'}</button>`);
+  }
+  return `<div class="actions">${buttons.length ? buttons.join('') : 'OK'}</div>`;
 }
 
 function reservationForm(departures) {
