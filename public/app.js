@@ -152,6 +152,13 @@ async function adminView(view) {
       if (action === 'block') showPaymentInstructions(data.instructions);
       adminView('adminReservations');
     });
+    target.querySelectorAll('[data-delete-reservation]').forEach(btn => btn.onclick = async () => {
+      const code = btn.dataset.code || 'esta reserva';
+      const ok = confirm(`Borrar ${code}? Desaparecera del panel. Si es una anulacion real, usa primero Anular.`);
+      if (!ok) return;
+      await api(`/api/admin/reservations/${btn.dataset.deleteReservation}`, { method: 'DELETE' });
+      adminView('adminReservations');
+    });
     target.querySelectorAll('[data-pay-instructions]').forEach(btn => btn.onclick = async () => {
       const data = await api(`/api/admin/reservations/${btn.dataset.payInstructions}/payment-instructions`, { method: 'POST' });
       showPaymentInstructions(data.instructions);
@@ -245,12 +252,11 @@ function reservationActions(r) {
   const buttons = [];
   if (r.status !== 'confirmada' && r.status !== 'cancelada') {
     buttons.push(`<button data-res-action="block" data-id="${r.id}">Bloquear</button>`);
-    buttons.push(`<button class="ghost" data-pay-instructions="${r.id}">Pago</button>`);
     buttons.push(`<button data-res-action="confirm" data-id="${r.id}">Confirmar</button>`);
-    buttons.push(`<button class="ghost" data-res-action="cancel" data-id="${r.id}">Cancelar</button>`);
-  } else {
-    buttons.push(`<button class="ghost" data-pay-instructions="${r.id}">Pago</button>`);
   }
+  buttons.push(`<button class="ghost" data-pay-instructions="${r.id}">Pago</button>`);
+  if (r.status !== 'cancelada') buttons.push(`<button class="ghost" data-res-action="cancel" data-id="${r.id}">Anular</button>`);
+  buttons.push(`<button class="ghost danger" data-delete-reservation="${r.id}" data-code="${esc(r.reservation_code)}">Borrar</button>`);
   return `<div class="actions">${buttons.join('')}</div>`;
 }
 
