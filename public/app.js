@@ -118,6 +118,13 @@ async function adminView(view) {
       await api(`/api/admin/agencies/${btn.dataset.id}/contract`, { method: 'PATCH', body });
       adminView('adminAgencies');
     });
+    target.querySelectorAll('[data-delete-agency]').forEach(btn => btn.onclick = async () => {
+      const name = btn.dataset.name || 'esta agencia';
+      const ok = confirm(`¿Borrar ${name}? Desaparecerá de la lista y no podrá acceder al portal.`);
+      if (!ok) return;
+      await api(`/api/admin/agencies/${btn.dataset.deleteAgency}`, { method: 'DELETE' });
+      adminView('adminAgencies');
+    });
   }
   if (view === 'adminDepartures') {
     const { departures } = await api('/api/admin/departures');
@@ -262,6 +269,7 @@ function agencyActions(agency) {
     buttons.push(`<button class="ghost" data-contract="verified" data-id="${agency.id}">Verificar contrato</button>`);
   }
   buttons.push(`<button class="ghost" data-contract="rejected" data-id="${agency.id}">Rechazar contrato</button>`);
+  buttons.push(`<button class="ghost danger" data-delete-agency="${agency.id}" data-name="${esc(agency.commercial_name)}">Borrar</button>`);
   return `<div class="actions">${buttons.join('')}</div>`;
 }
 
