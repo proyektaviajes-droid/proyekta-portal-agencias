@@ -611,15 +611,16 @@ async function adminApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/admin/control/summary') {
     try {
-      const [entities, categories, balances, cash, dueItems, tasks] = await Promise.all([
+      const [entities, categories, balances, cash, dueItems, tasks, documents] = await Promise.all([
         supa('entities', { query: { select: 'id,display_name,legal_name,tax_id,main_email,main_phone,status,created_at', order: 'created_at.desc', deleted_at: 'is.null', limit: '12' } }),
         supa('entity_categories', { query: { select: '*', order: 'name.asc' } }),
         supa('v_control_entity_balances', { query: { select: '*' } }),
         supa('v_control_cash_position', { query: { select: '*' } }),
-        supa('due_items', { query: { select: '*,entities(display_name)', order: 'due_date.asc', status: 'in.(pendiente,parcial,vencido)', limit: '12' } }),
-        supa('control_tasks', { query: { select: '*', order: 'due_at.asc', status: 'in.(pendiente,en_curso)', limit: '12' } })
+        supa('due_items', { query: { select: '*,entities(display_name)', order: 'due_date.asc', status: 'in.(pendiente,parcial,vencido)', limit: '200' } }),
+        supa('control_tasks', { query: { select: '*', order: 'due_at.asc', status: 'in.(pendiente,en_curso)', limit: '12' } }),
+        supa('economic_documents', { query: { select: '*,entities(display_name,tax_id)', order: 'issue_date.desc', limit: '200' } })
       ]);
-      return json(res, 200, { entities, categories, balances, cash: cash[0] || {}, dueItems, tasks });
+      return json(res, 200, { entities, categories, balances, cash: cash[0] || {}, dueItems, tasks, documents, accounting: accountingSummary(documents, dueItems) });
     } catch (error) {
       if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
       throw error;
@@ -660,6 +661,29 @@ async function adminApi(req, res, url) {
     }
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/admin/accounting/documents') {
+    try {
+      const input = await bodyJson(req);
+      const result = await createAccountingDocument(input, session);
+      return json(res, 201, result);
+    } catch (error) {
+      if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
+      throw error;
+    }
+  }
+
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/accounting\/documents\/[^/]+\/paid$/)) {
+    try {
+      const id = url.pathname.split('/')[5];
+      const input = await bodyJson(req);
+      const document = await markAccountingDocumentPaid(id, input, session);
+      return json(res, 200, { document });
+    } catch (error) {
+      if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
+      throw error;
+    }
+  }
+
   if (req.method === 'GET' && url.pathname.startsWith('/api/admin/export/')) {
     const type = url.pathname.split('/').pop();
     const stamp = new Date().toISOString().slice(0, 10);
@@ -694,6 +718,28 @@ async function adminApi(req, res, url) {
       return csv(res, `proyekta_incidencias_${stamp}.csv`, flattenRows(rows));
     }
     return json(res, 404, { error: 'Exportación no encontrada' });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/accounting/export') {
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const year = url.searchParams.get('year') || String(new Date().getFullYear());
+      const quarter = url.searchParams.get('quarter') || String(Math.floor(new Date().getMonth() / 3) + 1);
+      const range = quarterRange(year, quarter);
+      const rows = await supa('economic_documents', {
+        query: {
+          issue_date: `gte.${range.start}`,
+          select: '*,entities(display_name,tax_id,main_email)',
+          order: 'issue_date.asc'
+        }
+      });
+      const filtered = rows.filter(row => String(row.issue_date || '') <= range.end).map(accountingExportRow);
+      await audit(session, 'export_csv', 'economic_documents', null, { year, quarter });
+      return csv(res, `proyekta_gestoria_${year}_T${quarter}_${stamp}.csv`, filtered);
+    } catch (error) {
+      if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
+      throw error;
+    }
   }
 
   return json(res, 404, { error: 'Ruta admin no encontrada' });
@@ -1178,6 +1224,187 @@ function normalizeControlEntity(input) {
     notes: input.notes || null,
     status: input.status || 'activa'
   };
+}
+
+async function createAccountingDocument(input, session) {
+  const direction = input.direction === 'gasto' ? 'gasto' : 'ingreso';
+  const entity = await findOrCreateAccountingEntity(input);
+  const taxBase = roundMoney(input.taxBase || input.base || 0);
+  const taxRate = Number(input.taxRate || input.taxRatePct || 21) / (Number(input.taxRate || input.taxRatePct || 21) > 1 ? 100 : 1);
+  const taxAmount = roundMoney(input.taxAmount ?? taxBase * taxRate);
+  const totalAmount = roundMoney(input.totalAmount || taxBase + taxAmount);
+  const issueDate = input.issueDate || new Date().toISOString().slice(0, 10);
+  const dueDate = input.dueDate || issueDate;
+  const documentType = input.documentType || (direction === 'ingreso' ? 'factura_emitida' : 'factura_recibida');
+  const status = input.status || (direction === 'ingreso' ? 'emitida' : 'recibida');
+  const documentCode = input.documentCode || nextAccountingDocumentCode(direction, issueDate);
+  const concept = required(input.concept, 'Concepto');
+
+  const document = (await supa('economic_documents', {
+    method: 'POST',
+    body: [{
+      document_code: documentCode,
+      document_type: documentType,
+      direction,
+      entity_id: entity?.id || null,
+      issue_date: issueDate,
+      due_date: dueDate,
+      tax_base: taxBase,
+      tax_amount: taxAmount,
+      total_amount: totalAmount,
+      paid_amount: 0,
+      status,
+      concept,
+      notes: input.notes || null
+    }]
+  }))[0];
+
+  await supa('economic_document_lines', {
+    method: 'POST',
+    body: [{
+      document_id: document.id,
+      description: concept,
+      quantity: 1,
+      unit_price: taxBase,
+      tax_rate: taxRate
+    }]
+  });
+
+  const dueItem = (await supa('due_items', {
+    method: 'POST',
+    body: [{
+      document_id: document.id,
+      entity_id: entity?.id || null,
+      direction: direction === 'ingreso' ? 'cobrar' : 'pagar',
+      due_date: dueDate,
+      amount: totalAmount,
+      notes: input.notes || null
+    }]
+  }))[0];
+
+  await audit(session, 'accounting_document_created', 'economic_documents', document.id, { direction, totalAmount });
+  return { document, dueItem, entity };
+}
+
+async function markAccountingDocumentPaid(id, input, session) {
+  const document = (await supa('economic_documents', { query: { id: `eq.${id}`, limit: '1' } }))[0];
+  if (!document) throw new Error('Documento no encontrado');
+  const amount = roundMoney(input.amount || document.total_amount);
+  const movementDate = input.movementDate || new Date().toISOString().slice(0, 10);
+  const direction = document.direction === 'gasto' ? 'salida' : 'entrada';
+
+  const movement = (await supa('cash_movements', {
+    method: 'POST',
+    body: [{
+      entity_id: document.entity_id || null,
+      reservation_id: document.reservation_id || null,
+      movement_date: movementDate,
+      direction,
+      amount,
+      method: input.method || 'transferencia',
+      concept: input.concept || document.concept,
+      external_reference: input.externalReference || null,
+      status: 'confirmado'
+    }]
+  }))[0];
+
+  const dueItems = await supa('due_items', { query: { document_id: `eq.${id}`, limit: '1' } });
+  const dueItem = dueItems[0];
+  if (dueItem) {
+    await supa('cash_allocations', { method: 'POST', body: [{ cash_movement_id: movement.id, due_item_id: dueItem.id, economic_document_id: id, amount }] });
+    await supa('due_items', { method: 'PATCH', query: { id: `eq.${dueItem.id}` }, body: { paid_amount: amount, status: amount >= Number(dueItem.amount || 0) ? 'pagado' : 'parcial' } });
+  }
+
+  const updated = (await supa('economic_documents', {
+    method: 'PATCH',
+    query: { id: `eq.${id}` },
+    body: { paid_amount: amount, status: amount >= Number(document.total_amount || 0) ? 'pagada' : 'parcial' }
+  }))[0];
+
+  await audit(session, 'accounting_document_paid', 'economic_documents', id, { amount, movementId: movement.id });
+  return updated;
+}
+
+async function findOrCreateAccountingEntity(input) {
+  const name = String(input.entityName || input.displayName || '').trim();
+  if (!name) return null;
+  const taxId = String(input.taxId || '').trim();
+  if (taxId) {
+    const byTaxId = await supa('entities', { query: { tax_id: `eq.${taxId}`, deleted_at: 'is.null', limit: '1' } });
+    if (byTaxId[0]) return byTaxId[0];
+  }
+  const entity = (await supa('entities', {
+    method: 'POST',
+    body: [{
+      display_name: name,
+      legal_name: input.legalName || name,
+      tax_id: taxId || null,
+      entity_kind: input.entityKind || 'empresa',
+      main_email: input.mainEmail || null,
+      main_phone: input.mainPhone || null,
+      country: 'Espana',
+      status: 'activa'
+    }]
+  }))[0];
+  return entity;
+}
+
+function accountingSummary(documents = [], dueItems = []) {
+  const totals = { income: 0, expense: 0, vatIncome: 0, vatExpense: 0, toCollect: 0, toPay: 0 };
+  for (const doc of documents) {
+    if (doc.direction === 'ingreso') {
+      totals.income += Number(doc.total_amount || 0);
+      totals.vatIncome += Number(doc.tax_amount || 0);
+    }
+    if (doc.direction === 'gasto') {
+      totals.expense += Number(doc.total_amount || 0);
+      totals.vatExpense += Number(doc.tax_amount || 0);
+    }
+  }
+  for (const item of dueItems) {
+    const pending = Math.max(0, Number(item.amount || 0) - Number(item.paid_amount || 0));
+    if (item.direction === 'cobrar') totals.toCollect += pending;
+    if (item.direction === 'pagar') totals.toPay += pending;
+  }
+  Object.keys(totals).forEach(key => totals[key] = roundMoney(totals[key]));
+  return totals;
+}
+
+function accountingExportRow(row) {
+  return {
+    fecha: row.issue_date,
+    vencimiento: row.due_date || '',
+    tipo: row.document_type,
+    direccion: row.direction,
+    numero: row.document_code,
+    tercero: row.entities?.display_name || '',
+    nif: row.entities?.tax_id || '',
+    concepto: row.concept,
+    base: row.tax_base,
+    iva: row.tax_amount,
+    total: row.total_amount,
+    cobrado_pagado: row.paid_amount,
+    estado: row.status,
+    notas: row.notes || ''
+  };
+}
+
+function quarterRange(year, quarter) {
+  const y = Number(year);
+  const q = Math.min(4, Math.max(1, Number(quarter || 1)));
+  const startMonth = (q - 1) * 3;
+  const start = new Date(Date.UTC(y, startMonth, 1)).toISOString().slice(0, 10);
+  const end = new Date(Date.UTC(y, startMonth + 3, 0)).toISOString().slice(0, 10);
+  return { start, end };
+}
+
+function nextAccountingDocumentCode(direction, date) {
+  const prefix = direction === 'gasto' ? 'G' : 'I';
+  return `${prefix}-${String(date || '').replace(/\D/g, '')}-${Date.now().toString(36).toUpperCase()}`;
+}
+
+function roundMoney(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
 }
 
 function isMissingControlSchema(error) {
