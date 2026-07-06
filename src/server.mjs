@@ -538,7 +538,7 @@ async function adminApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/admin/reservations') {
-    const reservations = await supa('reservations', { query: { select: '*,agencies(commercial_name,agency_code,main_email),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at,deposit_amount)', order: 'created_at.desc' } });
+    const reservations = await supa('reservations', { query: { deleted_at: 'is.null', select: '*,agencies(commercial_name,agency_code,main_email),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at,deposit_amount)', order: 'created_at.desc' } });
     return json(res, 200, { reservations });
   }
 
@@ -549,6 +549,26 @@ async function adminApi(req, res, url) {
     const instructions = buildPaymentInstructions(reservation);
     await audit(session, 'payment_instructions_generated', 'reservations', id);
     return json(res, 200, { instructions });
+  }
+
+  if (req.method === 'DELETE' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+$/)) {
+    const id = url.pathname.split('/')[4];
+    const current = await getReservationWithContext(id);
+    if (!current) return json(res, 404, { error: 'Reserva no encontrada' });
+
+    const updated = (await supa('reservations', {
+      method: 'PATCH',
+      query: { id: `eq.${id}`, deleted_at: 'is.null' },
+      body: { status: 'cancelada', deleted_at: new Date().toISOString(), block_expires_at: null }
+    }))[0];
+    if (!updated) return json(res, 404, { error: 'Reserva no encontrada' });
+
+    if (current.status !== 'cancelada') {
+      await supa('reservation_status_history', { method: 'POST', body: [{ reservation_id: id, old_status: current.status, new_status: 'cancelada', actor_type: 'admin', actor_id: session.userId, reason: 'Borrada por administrador' }] });
+      await adjustInventoryForReservationChange(current, updated).catch(error => console.error('No se pudo actualizar inventario:', error));
+    }
+    await audit(session, 'reservation_deleted', 'reservations', id, { deleted_at: updated.deleted_at });
+    return json(res, 200, { ok: true, reservation: updated });
   }
 
   if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+$/)) {
@@ -654,7 +674,7 @@ async function adminApi(req, res, url) {
       return csv(res, `proyekta_salidas_${stamp}.csv`, rows);
     }
     if (type === 'reservations') {
-      const rows = await supa('reservations', { query: { select: '*,agencies(agency_code,commercial_name),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } });
+      const rows = await supa('reservations', { query: { deleted_at: 'is.null', select: '*,agencies(agency_code,commercial_name),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } });
       await audit(session, 'export_csv', 'reservations', null, { type });
       return csv(res, `proyekta_reservas_${stamp}.csv`, flattenRows(rows));
     }
@@ -686,7 +706,7 @@ async function agencyApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/agency/dashboard') {
     const [departures, reservations, payments, incidents] = await Promise.all([
       supa('departures', { query: { visible_to_agencies: 'eq.true', status: 'in.(disponible,pocas_plazas,confirmada)', order: 'starts_at.asc' } }),
-      supa('reservations', { query: { agency_id: `eq.${session.agencyId}`, select: '*,departures(trip_name,departure_code,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } }),
+      supa('reservations', { query: { agency_id: `eq.${session.agencyId}`, deleted_at: 'is.null', select: '*,departures(trip_name,departure_code,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } }),
       supa('payments', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc' } }),
       supa('incidents', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc' } })
     ]);
@@ -720,7 +740,7 @@ async function agencyApi(req, res, url) {
 
   if (req.method === 'POST' && url.pathname === '/api/agency/travellers') {
     const input = await bodyJson(req);
-    const reservation = (await supa('reservations', { query: { id: `eq.${input.reservationId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    const reservation = (await supa('reservations', { query: { id: `eq.${input.reservationId}`, agency_id: `eq.${session.agencyId}`, deleted_at: 'is.null', limit: '1' } }))[0];
     if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
     const traveller = (await supa('travellers', { method: 'POST', body: [{ ...normalizeTraveller(input), agency_id: session.agencyId, reservation_id: reservation.id }] }))[0];
     await audit(session, 'traveller_created', 'travellers', traveller.id);
@@ -729,7 +749,7 @@ async function agencyApi(req, res, url) {
 
   if (req.method === 'POST' && url.pathname === '/api/agency/payments') {
     const input = await bodyJson(req);
-    const reservation = (await supa('reservations', { query: { id: `eq.${input.reservationId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    const reservation = (await supa('reservations', { query: { id: `eq.${input.reservationId}`, agency_id: `eq.${session.agencyId}`, deleted_at: 'is.null', limit: '1' } }))[0];
     if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
     const payment = (await supa('payments', { method: 'POST', body: [{
       reservation_id: reservation.id,
@@ -985,6 +1005,7 @@ async function getReservationWithContext(id) {
   return (await supa('reservations', {
     query: {
       id: `eq.${id}`,
+      deleted_at: 'is.null',
       select: '*,agencies(commercial_name,agency_code,main_email),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at,deposit_amount,price_per_traveller)',
       limit: '1'
     }
