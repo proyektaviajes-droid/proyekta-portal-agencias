@@ -383,6 +383,28 @@ async function adminApi(req, res, url) {
     return json(res, 200, { invitationUrl, message });
   }
 
+  if (req.method === 'DELETE' && url.pathname.match(/^\/api\/admin\/agencies\/[^/]+$/)) {
+    const agencyId = url.pathname.split('/')[4];
+    const now = new Date().toISOString();
+
+    const agency = (await supa('agencies', {
+      method: 'PATCH',
+      query: { id: `eq.${agencyId}`, deleted_at: 'is.null' },
+      body: { deleted_at: now, access_status: 'desactivada' }
+    }))[0];
+
+    if (!agency) return json(res, 404, { error: 'Agencia no encontrada' });
+
+    await supa('agency_users', {
+      method: 'PATCH',
+      query: { agency_id: `eq.${agencyId}` },
+      body: { is_active: false }
+    });
+
+    await audit(session, 'agency_deleted', 'agencies', agencyId, { deleted_at: now });
+    return json(res, 200, { ok: true, agency });
+  }
+
   if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/agencies\/[^/]+\/access$/)) {
     const agencyId = url.pathname.split('/')[4];
     const input = await bodyJson(req);
