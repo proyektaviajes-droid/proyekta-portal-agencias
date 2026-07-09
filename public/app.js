@@ -184,6 +184,7 @@ async function adminView(view) {
         <div class="grid">
           ${metric('Ingresos registrados', money(data.accounting?.income || 0))}
           ${metric('Gastos registrados', money(data.accounting?.expense || 0))}
+          ${metric('Compras previstas', money(data.accounting?.plannedPurchases || 0))}
           ${metric('Pendiente de cobrar', money(data.accounting?.toCollect || 0))}
           ${metric('Pendiente de pagar', money(data.accounting?.toPay || 0))}
         </div>
@@ -193,7 +194,28 @@ async function adminView(view) {
         <h3>Facturas, recibos y gastos recientes</h3>
         ${table(['Fecha','Tipo','Tercero','Concepto','Base','IVA','Total','Pagado','Estado','Acciones'], (data.documents || []).map(d => [
           d.issue_date, d.direction === 'gasto' ? 'Gasto' : 'Ingreso', d.entities?.display_name || '', d.concept,
-          money(d.tax_base), money(d.tax_amount), money(d.total_amount), money(d.paid_amount), badge(d.status), accountingDocActions(d)
+          money(d.tax_base), money(d.tax_amount), money(d.total_amount), money(d.paid_amount), badge(d.status), accountingDocActions(d, data.filesByDocument?.[d.id] || [])
+        ]))}
+        <h3>Compras previstas recuperadas de PROYEKTA Control</h3>
+        ${table(['Articulo','Proveedor','Categoria','Cantidad','Precio unit.','Total previsto','Prioridad','Estado'], (data.plannedPurchases || []).map(p => [
+          p.item_name,
+          p.pc_entities?.display_name || '',
+          p.pc_expense_categories?.name || '',
+          p.quantity || 0,
+          money(p.estimated_unit_price || 0),
+          money((Number(p.estimated_unit_price || 0) * Number(p.quantity || 0))),
+          p.priority || '',
+          badge(p.status)
+        ]))}
+        <h3>Gastos pagados recuperados de PROYEKTA Control</h3>
+        ${table(['Fecha','Concepto','Proveedor','Categoria','Total','Metodo','Estado'], (data.legacyExpenses || []).map(e => [
+          e.expense_date,
+          e.title,
+          e.pc_entities?.display_name || '',
+          e.pc_expense_categories?.name || '',
+          money(e.total_amount || 0),
+          e.payment_method || '',
+          badge(e.status)
         ]))}
         <h3>Pendientes</h3>
         ${table(['Tercero','Tipo','Fecha','Importe','Pagado','Estado'], data.dueItems.map(d => [d.entities?.display_name || '', d.direction, d.due_date, money(d.amount), money(d.paid_amount), badge(d.status)]))}
@@ -209,6 +231,7 @@ async function adminView(view) {
         await api(`/api/admin/accounting/documents/${btn.dataset.accountingPaid}/paid`, { method: 'PATCH', body: {} });
         adminView('adminGestoria');
       });
+      target.querySelectorAll('[data-accounting-upload]').forEach(btn => btn.onclick = () => uploadAccountingFile(btn.dataset.accountingUpload));
     } catch (err) {
       target.innerHTML = html`
         <h2>Gestoria</h2>
@@ -395,6 +418,34 @@ async function createAccountingDocument(e) {
   adminView('adminGestoria');
 }
 
+async function uploadAccountingFile(documentId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/pdf,image/jpeg,image/png,image/webp';
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) return alert('Archivo demasiado grande. Maximo 10 MB.');
+    const data = await readFileAsDataUrl(file);
+    await api(`/api/admin/accounting/documents/${documentId}/files`, {
+      method: 'POST',
+      body: { filename: file.name, mimeType: file.type, data }
+    });
+    alert('Factura/ticket subido');
+    adminView('adminGestoria');
+  };
+  input.click();
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 async function createReservation(e) {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(e.currentTarget));
@@ -509,8 +560,12 @@ function accountingExportPanel() {
   </div>`;
 }
 
-function accountingDocActions(doc) {
+function accountingDocActions(doc, files = []) {
   const buttons = [];
+  for (const file of files) {
+    buttons.push(`<a class="button-link" target="_blank" href="/api/admin/accounting/documents/${doc.id}/files/${file.id}">Ver factura</a>`);
+  }
+  buttons.push(`<button data-accounting-upload="${doc.id}">Subir factura</button>`);
   if (Number(doc.paid_amount || 0) < Number(doc.total_amount || 0) && !['cancelada','rectificada'].includes(doc.status)) {
     buttons.push(`<button data-accounting-paid="${doc.id}">${doc.direction === 'gasto' ? 'Marcar pagado' : 'Marcar cobrado'}</button>`);
   }
