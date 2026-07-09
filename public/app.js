@@ -179,53 +179,12 @@ async function adminView(view) {
   if (view === 'adminGestoria') {
     try {
       const data = await api('/api/admin/control/summary');
-      target.innerHTML = html`
-        <div class="toolbar"><h2>Gestoria</h2><div class="actions"><button id="newAccountingDoc">Nuevo ingreso/gasto</button><button class="ghost" id="newEntity">Nueva entidad</button></div></div>
-        <div class="grid">
-          ${metric('Ingresos registrados', money(data.accounting?.income || 0))}
-          ${metric('Gastos registrados', money(data.accounting?.expense || 0))}
-          ${metric('Compras previstas', money(data.accounting?.plannedPurchases || 0))}
-          ${metric('Pendiente de cobrar', money(data.accounting?.toCollect || 0))}
-          ${metric('Pendiente de pagar', money(data.accounting?.toPay || 0))}
-        </div>
-        <div id="accountingForm" class="panel hidden">${accountingDocumentForm()}</div>
-        <div id="entityForm" class="panel hidden">${controlEntityForm(data.categories)}</div>
-        ${accountingExportPanel()}
-        <h3>Facturas, recibos y gastos recientes</h3>
-        ${table(['Fecha','Tipo','Tercero','Concepto','Base','IVA','Total','Pagado','Estado','Acciones'], (data.documents || []).map(d => [
-          d.issue_date, d.direction === 'gasto' ? 'Gasto' : 'Ingreso', d.entities?.display_name || '', d.concept,
-          money(d.tax_base), money(d.tax_amount), money(d.total_amount), money(d.paid_amount), badge(d.status), accountingDocActions(d, data.filesByDocument?.[d.id] || [])
-        ]))}
-        <h3>Compras previstas recuperadas de PROYEKTA Control</h3>
-        ${table(['Articulo','Proveedor','Categoria','Cantidad','Precio unit.','Total previsto','Prioridad','Estado'], (data.plannedPurchases || []).map(p => [
-          p.item_name,
-          p.pc_entities?.display_name || '',
-          p.pc_expense_categories?.name || '',
-          p.quantity || 0,
-          money(p.estimated_unit_price || 0),
-          money((Number(p.estimated_unit_price || 0) * Number(p.quantity || 0))),
-          p.priority || '',
-          badge(p.status)
-        ]))}
-        <h3>Gastos pagados recuperados de PROYEKTA Control</h3>
-        ${table(['Fecha','Concepto','Proveedor','Categoria','Total','Metodo','Estado'], (data.legacyExpenses || []).map(e => [
-          e.expense_date,
-          e.title,
-          e.pc_entities?.display_name || '',
-          e.pc_expense_categories?.name || '',
-          money(e.total_amount || 0),
-          e.payment_method || '',
-          badge(e.status)
-        ]))}
-        <h3>Pendientes</h3>
-        ${table(['Tercero','Tipo','Fecha','Importe','Pagado','Estado'], data.dueItems.map(d => [d.entities?.display_name || '', d.direction, d.due_date, money(d.amount), money(d.paid_amount), badge(d.status)]))}
-        <h3>Entidades recientes</h3>
-        ${table(['Nombre','Email','Telefono','Estado'], data.entities.map(e => [e.display_name, e.main_email || '', e.main_phone || '', badge(e.status)]))}
-      `;
+      target.innerHTML = gestoriaDashboard(data);
       document.querySelector('#newAccountingDoc').onclick = () => document.querySelector('#accountingForm').classList.toggle('hidden');
       document.querySelector('#newEntity').onclick = () => document.querySelector('#entityForm').classList.toggle('hidden');
       document.querySelector('#createAccountingDoc')?.addEventListener('submit', createAccountingDocument);
       document.querySelector('#createControlEntity')?.addEventListener('submit', createControlEntity);
+      target.querySelectorAll('[data-gestoria-tab]').forEach(btn => btn.onclick = () => showGestoriaTab(btn.dataset.gestoriaTab));
       target.querySelectorAll('[data-accounting-paid]').forEach(btn => btn.onclick = async () => {
         if (!confirm('Marcar como cobrado/pagado?')) return;
         await api(`/api/admin/accounting/documents/${btn.dataset.accountingPaid}/paid`, { method: 'PATCH', body: {} });
@@ -545,6 +504,244 @@ function accountingDocumentForm() {
     <label class="full">Notas<textarea name="notes"></textarea></label>
     <button class="full">Guardar para gestoria</button>
   </form>`;
+}
+
+function gestoriaDashboard(data) {
+  const model = buildGestoriaModel(data);
+  return html`
+    <div class="toolbar"><h2>Gestoria</h2><div class="actions"><button id="newAccountingDoc">Nuevo ingreso/gasto</button><button class="ghost" id="newEntity">Nueva entidad</button></div></div>
+    <div class="grid gestoria-metrics">
+      ${metric('Cobrado real', money(model.totalCollected))}
+      ${metric('Pendiente de cobrar', money(model.totalToCollect))}
+      ${metric('Gastos registrados', money(model.totalExpense))}
+      ${metric('Pendiente de pagar', money(model.totalToPay))}
+      ${metric('Compras previstas', money(model.totalPlanned))}
+      ${metric('Saldo caja/banco', money(model.cashBalance))}
+    </div>
+    <div id="accountingForm" class="panel hidden">${accountingDocumentForm()}</div>
+    <div id="entityForm" class="panel hidden">${controlEntityForm(data.categories || [])}</div>
+    <div class="gestoria-tabs">
+      ${gestoriaTabButton('resumen', 'Resumen', true)}
+      ${gestoriaTabButton('cobros', 'Cobros')}
+      ${gestoriaTabButton('pagos', 'Pagos')}
+      ${gestoriaTabButton('emitidas', 'Facturas emitidas')}
+      ${gestoriaTabButton('recibidas', 'Facturas recibidas / tickets')}
+      ${gestoriaTabButton('compras', 'Compras previstas')}
+      ${gestoriaTabButton('proveedores', 'Proveedores')}
+      ${gestoriaTabButton('liquidaciones', 'Liquidaciones agencias')}
+      ${gestoriaTabButton('caja', 'Caja y bancos')}
+      ${gestoriaTabButton('informes', 'Informes')}
+    </div>
+    <section class="gestoria-section" data-gestoria-section="resumen">${gestoriaResumen(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="cobros">${gestoriaCobros(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="pagos">${gestoriaPagos(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="emitidas">${gestoriaFacturasEmitidas(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="recibidas">${gestoriaFacturasRecibidas(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="compras">${gestoriaCompras(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="proveedores">${gestoriaProveedores(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="liquidaciones">${gestoriaLiquidaciones(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="caja">${gestoriaCaja(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="informes">${gestoriaInformes(model)}</section>
+  `;
+}
+
+function gestoriaTabButton(id, label, active = false) {
+  return `<button class="${active ? 'active' : ''}" data-gestoria-tab="${id}">${esc(label)}</button>`;
+}
+
+function showGestoriaTab(id) {
+  document.querySelectorAll('[data-gestoria-tab]').forEach(btn => btn.classList.toggle('active', btn.dataset.gestoriaTab === id));
+  document.querySelectorAll('[data-gestoria-section]').forEach(section => section.classList.toggle('hidden', section.dataset.gestoriaSection !== id));
+}
+
+function buildGestoriaModel(data) {
+  const documents = data.documents || [];
+  const realDocs = documents.filter(d => !['presupuesto', 'proforma'].includes(d.document_type) && !['borrador', 'cancelada'].includes(d.status));
+  const incomeDocs = realDocs.filter(d => d.direction === 'ingreso');
+  const expenseDocs = realDocs.filter(d => d.direction === 'gasto');
+  const issuedDocs = documents.filter(d => d.direction === 'ingreso');
+  const receivedDocs = documents.filter(d => d.direction === 'gasto');
+  const plannedDocs = documents.filter(d => d.document_type === 'presupuesto' || String(d.concept || '').startsWith('COMPRA PREVISTA'));
+  const purchases = (data.plannedPurchases || []).length ? (data.plannedPurchases || []) : plannedDocs.map(d => ({
+    item_name: String(d.concept || '').replace(/^COMPRA PREVISTA - /, ''),
+    quantity: 1,
+    estimated_unit_price: d.total_amount,
+    status: d.status,
+    priority: '',
+    pc_expense_categories: { name: 'Importado' },
+    pc_entities: { display_name: d.entities?.display_name || '' }
+  }));
+  const payments = data.payments || [];
+  const reservations = data.reservations || [];
+  const dueItems = data.dueItems || [];
+  const cashMovements = data.cashMovements || [];
+  const agencies = data.agencies || [];
+  const filesByDocument = data.filesByDocument || {};
+  const totalCollected = payments.filter(p => ['verificado', 'recibido'].includes(p.status)).reduce((s, p) => s + Number(p.amount || 0), 0)
+    + incomeDocs.reduce((s, d) => s + Number(d.paid_amount || 0), 0);
+  const totalReservationSales = reservations.reduce((s, r) => s + Number(r.total_amount || 0), 0);
+  const totalReservationPaid = reservations.reduce((s, r) => s + Number(r.paid_amount || 0), 0);
+  const totalToCollect = Math.max(0, totalReservationSales - totalReservationPaid) + dueItems.filter(d => d.direction === 'cobrar').reduce((s, d) => s + Math.max(0, Number(d.amount || 0) - Number(d.paid_amount || 0)), 0);
+  const totalExpense = expenseDocs.reduce((s, d) => s + Number(d.total_amount || 0), 0);
+  const totalPaidExpense = expenseDocs.reduce((s, d) => s + Number(d.paid_amount || 0), 0);
+  const totalToPay = dueItems.filter(d => d.direction === 'pagar').reduce((s, d) => s + Math.max(0, Number(d.amount || 0) - Number(d.paid_amount || 0)), 0)
+    + expenseDocs.reduce((s, d) => s + Math.max(0, Number(d.total_amount || 0) - Number(d.paid_amount || 0)), 0);
+  const totalPlanned = purchases.filter(p => !['comprado', 'cancelado', 'descartado'].includes(p.status)).reduce((s, p) => s + Number(p.estimated_unit_price || 0) * Number(p.quantity || 0), 0);
+  const cashIn = cashMovements.filter(m => m.direction === 'entrada' && ['confirmado', 'conciliado'].includes(m.status)).reduce((s, m) => s + Number(m.amount || 0), 0);
+  const cashOut = cashMovements.filter(m => m.direction === 'salida' && ['confirmado', 'conciliado'].includes(m.status)).reduce((s, m) => s + Number(m.amount || 0), 0);
+  const cashBalance = Number(data.cash?.saldo_movimientos || 0) || cashIn - cashOut;
+  const agencyRows = agencies.map(agency => {
+    const agencyReservations = reservations.filter(r => r.agency_id === agency.id);
+    const sales = agencyReservations.reduce((s, r) => s + Number(r.total_amount || 0), 0);
+    const collected = agencyReservations.reduce((s, r) => s + Number(r.paid_amount || 0), 0);
+    const commissionRate = Number(agency.default_commission_rate || 0);
+    const commission = sales * commissionRate;
+    return { agency, agencyReservations, sales, collected, commissionRate, commission };
+  });
+  return { data, documents, realDocs, incomeDocs, expenseDocs, issuedDocs, receivedDocs, purchases, payments, reservations, dueItems, cashMovements, agencies, filesByDocument, totalCollected, totalReservationSales, totalReservationPaid, totalToCollect, totalExpense, totalPaidExpense, totalToPay, totalPlanned, cashBalance, cashIn, cashOut, agencyRows };
+}
+
+function gestoriaResumen(model) {
+  return html`
+    <div class="grid two">
+      ${summaryCard('Ventas de reservas', money(model.totalReservationSales), `${money(model.totalReservationPaid)} cobrado en reservas`)}
+      ${summaryCard('Resultado operativo simple', money(model.totalCollected - model.totalExpense), 'Cobrado real menos gastos registrados')}
+    </div>
+    <h3>Alertas de gestion</h3>
+    ${table(['Area','Situacion','Accion'], [
+      ['Cobros', money(model.totalToCollect), 'Revisar reservas pendientes y vencimientos'],
+      ['Pagos', money(model.totalToPay), 'Revisar facturas recibidas y pagos a proveedores'],
+      ['Compras previstas', money(model.totalPlanned), 'Decidir que comprar, aplazar o descartar'],
+      ['Facturas adjuntas', `${Object.keys(model.filesByDocument).length} documentos con archivo`, 'Subir tickets/facturas que falten']
+    ])}
+  `;
+}
+
+function gestoriaCobros(model) {
+  return html`
+    <h3>Cobros de reservas y facturas emitidas</h3>
+    ${table(['Reserva','Agencia','Total reserva','Cobrado','Pendiente','Estado'], model.reservations.map(r => [
+      r.reservation_code,
+      r.agencies?.commercial_name || '',
+      money(r.total_amount),
+      money(r.paid_amount),
+      money(Math.max(0, Number(r.total_amount || 0) - Number(r.paid_amount || 0))),
+      badge(r.status)
+    ]))}
+    <h3>Pagos comunicados por agencias</h3>
+    ${table(['Fecha','Reserva','Agencia','Pagador','Importe','Metodo','Estado'], model.payments.map(p => [
+      formatDateTime(p.created_at), p.reservations?.reservation_code || '', p.agencies?.commercial_name || '', p.payer_name || '', money(p.amount), p.method || '', badge(p.status)
+    ]))}
+  `;
+}
+
+function gestoriaPagos(model) {
+  return html`
+    <h3>Pagos pendientes y realizados</h3>
+    ${table(['Tercero','Tipo','Fecha vencimiento','Importe','Pagado','Pendiente','Estado'], model.dueItems.filter(d => d.direction === 'pagar').map(d => [
+      d.entities?.display_name || '', d.direction, d.due_date, money(d.amount), money(d.paid_amount), money(Math.max(0, Number(d.amount || 0) - Number(d.paid_amount || 0))), badge(d.status)
+    ]))}
+    <h3>Facturas recibidas con estado de pago</h3>
+    ${table(['Fecha','Proveedor','Concepto','Total','Pagado','Pendiente','Estado','Acciones'], model.expenseDocs.map(d => [
+      d.issue_date, d.entities?.display_name || '', d.concept, money(d.total_amount), money(d.paid_amount), money(Math.max(0, Number(d.total_amount || 0) - Number(d.paid_amount || 0))), badge(d.status), accountingDocActions(d, model.filesByDocument[d.id] || [])
+    ]))}
+  `;
+}
+
+function gestoriaFacturasEmitidas(model) {
+  return html`
+    <h3>Facturas emitidas / ingresos</h3>
+    ${table(['Fecha','Cliente / agencia','Concepto','Base','IVA','Total','Cobrado','Estado','Acciones'], model.issuedDocs.map(d => [
+      d.issue_date, d.entities?.display_name || '', d.concept, money(d.tax_base), money(d.tax_amount), money(d.total_amount), money(d.paid_amount), badge(d.status), accountingDocActions(d, model.filesByDocument[d.id] || [])
+    ]))}
+  `;
+}
+
+function gestoriaFacturasRecibidas(model) {
+  return html`
+    <h3>Facturas recibidas / tickets</h3>
+    ${table(['Fecha','Proveedor','Concepto','Base','IVA','Total','Pagado','Archivo','Acciones'], model.receivedDocs.map(d => [
+      d.issue_date, d.entities?.display_name || '', d.concept, money(d.tax_base), money(d.tax_amount), money(d.total_amount), money(d.paid_amount), (model.filesByDocument[d.id] || []).length ? 'Si' : 'No', accountingDocActions(d, model.filesByDocument[d.id] || [])
+    ]))}
+  `;
+}
+
+function gestoriaCompras(model) {
+  return html`
+    <h3>Compras previstas</h3>
+    ${table(['Articulo','Proveedor','Categoria','Cantidad','Precio unit.','Total previsto','Prioridad','Estado'], model.purchases.map(p => [
+      p.item_name || '',
+      p.pc_entities?.display_name || '',
+      p.pc_expense_categories?.name || '',
+      p.quantity || 0,
+      money(p.estimated_unit_price || 0),
+      money(Number(p.estimated_unit_price || 0) * Number(p.quantity || 0)),
+      p.priority || '',
+      badge(p.status)
+    ]))}
+  `;
+}
+
+function gestoriaProveedores(model) {
+  const suppliers = (model.data.entities || []).filter(e => e.status !== 'inactiva');
+  return html`
+    <h3>Proveedores y entidades</h3>
+    ${table(['Nombre','NIF/CIF','Email','Telefono','Estado'], suppliers.map(e => [e.display_name, e.tax_id || '', e.main_email || '', e.main_phone || '', badge(e.status)]))}
+  `;
+}
+
+function gestoriaLiquidaciones(model) {
+  return html`
+    <h3>Liquidaciones a agencias</h3>
+    ${table(['Agencia','Reservas','Ventas','Cobrado','Comision','Pendiente cliente','Estado acceso'], model.agencyRows.map(row => [
+      row.agency.commercial_name,
+      row.agencyReservations.length,
+      money(row.sales),
+      money(row.collected),
+      `${money(row.commission)} (${Math.round(row.commissionRate * 100)}%)`,
+      money(Math.max(0, row.sales - row.collected)),
+      badge(row.agency.access_status)
+    ]))}
+  `;
+}
+
+function gestoriaCaja(model) {
+  return html`
+    <div class="grid two">
+      ${summaryCard('Entradas confirmadas', money(model.cashIn), 'Movimientos de caja/banco')}
+      ${summaryCard('Salidas confirmadas', money(model.cashOut), 'Pagos registrados')}
+    </div>
+    <h3>Movimientos de caja y bancos</h3>
+    ${table(['Fecha','Tipo','Tercero','Concepto','Importe','Metodo','Estado'], model.cashMovements.map(m => [
+      m.movement_date, m.direction, m.entities?.display_name || '', m.concept, money(m.amount), m.method || '', badge(m.status)
+    ]))}
+  `;
+}
+
+function gestoriaInformes(model) {
+  return html`
+    ${accountingExportPanel()}
+    <div class="grid two">
+      ${exportCard('Reservas', 'reservations')}
+      ${exportCard('Pagos', 'payments')}
+      ${exportCard('Agencias', 'agencies')}
+      ${exportCard('Viajeros', 'travellers')}
+    </div>
+    <h3>Resumen rapido</h3>
+    ${table(['Indicador','Importe'], [
+      ['Ventas reservas', money(model.totalReservationSales)],
+      ['Cobrado reservas', money(model.totalReservationPaid)],
+      ['Pendiente de cobrar', money(model.totalToCollect)],
+      ['Gastos registrados', money(model.totalExpense)],
+      ['Pendiente de pagar', money(model.totalToPay)],
+      ['Compras previstas', money(model.totalPlanned)],
+      ['Saldo caja/banco', money(model.cashBalance)]
+    ])}
+  `;
+}
+
+function summaryCard(label, value, note) {
+  return `<div class="card"><div class="metric">${esc(value)}</div><h3>${esc(label)}</h3><p class="muted">${esc(note || '')}</p></div>`;
 }
 
 function accountingExportPanel() {
