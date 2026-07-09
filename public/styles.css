@@ -77,10 +77,21 @@ th { background: #f8faf8; color: #33413d; font-size: 13px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
 .full { grid-column: 1 / -1; }
+.gestoria-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 14px; }
+.gestoria-tabs {
+  display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.gestoria-tabs button {
+  background: #fff; color: var(--brand); border: 1px solid var(--line);
+  padding: 9px 12px; border-radius: 6px;
+}
+.gestoria-tabs button.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+.gestoria-section { display: grid; gap: 14px; }
 
 @media (max-width: 860px) {
   .app { padding: 14px; }
-  .login-grid, .layout, .grid, .grid.two, .form-grid { grid-template-columns: 1fr; }
+  .login-grid, .layout, .grid, .grid.two, .form-grid, .gestoria-metrics { grid-template-columns: 1fr; }
   .side { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .topbar { height: auto; min-height: 62px; gap: 10px; }
 }
