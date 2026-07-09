@@ -17,6 +17,7 @@ const PORT = Number(process.env.PORT || 4177);
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
+const ACCOUNTING_BUCKET = process.env.ACCOUNTING_BUCKET || 'proyekta-accounting';
 
 if (isMain && (!SUPABASE_URL || !SERVICE_KEY || SESSION_SECRET.length < 32)) {
   console.warn('Faltan variables: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY o SESSION_SECRET largo.');
@@ -82,6 +83,16 @@ async function bodyJson(req) {
   return JSON.parse(body);
 }
 
+function binary(res, filename, mimeType, buffer) {
+  res.writeHead(200, {
+    'content-type': mimeType || 'application/octet-stream',
+    'content-disposition': `inline; filename="${safeFilename(filename || 'documento')}"`,
+    'cache-control': 'private, no-store',
+    'x-content-type-options': 'nosniff'
+  });
+  res.end(buffer);
+}
+
 function sign(payload) {
   const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const sig = createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
@@ -135,6 +146,14 @@ async function supa(path, { method = 'GET', body, query } = {}) {
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error(data?.message || text || `Supabase ${res.status}`);
   return data;
+}
+
+async function optionalSupa(path, options = {}, fallback = []) {
+  try {
+    return await supa(path, options);
+  } catch {
+    return fallback;
+  }
 }
 
 async function audit(session, action, entityType, entityId, metadata = {}) {
@@ -611,16 +630,33 @@ async function adminApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/admin/control/summary') {
     try {
-      const [entities, categories, balances, cash, dueItems, tasks, documents] = await Promise.all([
+      const [entities, categories, balances, cash, dueItems, tasks, documents, plannedPurchases, legacyExpenses, accountingFiles] = await Promise.all([
         supa('entities', { query: { select: 'id,display_name,legal_name,tax_id,main_email,main_phone,status,created_at', order: 'created_at.desc', deleted_at: 'is.null', limit: '12' } }),
         supa('entity_categories', { query: { select: '*', order: 'name.asc' } }),
         supa('v_control_entity_balances', { query: { select: '*' } }),
         supa('v_control_cash_position', { query: { select: '*' } }),
         supa('due_items', { query: { select: '*,entities(display_name)', order: 'due_date.asc', status: 'in.(pendiente,parcial,vencido)', limit: '200' } }),
         supa('control_tasks', { query: { select: '*', order: 'due_at.asc', status: 'in.(pendiente,en_curso)', limit: '12' } }),
-        supa('economic_documents', { query: { select: '*,entities(display_name,tax_id)', order: 'issue_date.desc', limit: '200' } })
+        supa('economic_documents', { query: { select: '*,entities(display_name,tax_id)', order: 'issue_date.desc', limit: '200' } }),
+        optionalSupa('pc_purchase_items', { query: { select: '*,pc_expense_categories(name),pc_entities(display_name)', order: 'created_at.desc', limit: '200' } }),
+        optionalSupa('pc_expenses', { query: { select: '*,pc_expense_categories(name),pc_entities(display_name)', order: 'expense_date.desc', limit: '200' } }),
+        optionalSupa('documents', { query: { select: '*', document_type: 'eq.factura_gestoria', order: 'created_at.desc', limit: '500' } })
       ]);
-      return json(res, 200, { entities, categories, balances, cash: cash[0] || {}, dueItems, tasks, documents, accounting: accountingSummary(documents, dueItems) });
+      const filesByDocument = groupAccountingFiles(accountingFiles);
+      return json(res, 200, {
+        entities,
+        categories,
+        balances,
+        cash: cash[0] || {},
+        dueItems,
+        tasks,
+        documents,
+        plannedPurchases,
+        legacyExpenses,
+        accountingFiles,
+        filesByDocument,
+        accounting: accountingSummary(documents, dueItems, legacyExpenses, plannedPurchases)
+      });
     } catch (error) {
       if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
       throw error;
@@ -718,6 +754,33 @@ async function adminApi(req, res, url) {
       return csv(res, `proyekta_incidencias_${stamp}.csv`, flattenRows(rows));
     }
     return json(res, 404, { error: 'Exportación no encontrada' });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/accounting\/documents\/[^/]+\/files$/)) {
+    const id = url.pathname.split('/')[4];
+    try {
+      const input = await bodyJson(req);
+      const file = await attachAccountingFile(id, input, session);
+      return json(res, 201, { file });
+    } catch (error) {
+      if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
+      throw error;
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/admin\/accounting\/documents\/[^/]+\/files\/[^/]+$/)) {
+    const parts = url.pathname.split('/');
+    const documentId = parts[5];
+    const fileId = parts[7];
+    try {
+      const file = (await supa('documents', { query: { id: `eq.${fileId}`, document_type: 'eq.factura_gestoria', limit: '1' } }))[0];
+      if (!file || !file.storage_path.includes(`/documents/${documentId}/`)) throw new Error('Archivo no encontrado');
+      const loaded = await downloadAccountingFile(file.storage_path);
+      return binary(res, file.title, loaded.mimeType, loaded.buffer);
+    } catch (error) {
+      if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
+      throw error;
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/admin/accounting/export') {
@@ -1349,9 +1412,10 @@ async function findOrCreateAccountingEntity(input) {
   return entity;
 }
 
-function accountingSummary(documents = [], dueItems = []) {
-  const totals = { income: 0, expense: 0, vatIncome: 0, vatExpense: 0, toCollect: 0, toPay: 0 };
+function accountingSummary(documents = [], dueItems = [], legacyExpenses = [], plannedPurchases = []) {
+  const totals = { income: 0, expense: 0, vatIncome: 0, vatExpense: 0, toCollect: 0, toPay: 0, plannedPurchases: 0, legacyExpense: 0 };
   for (const doc of documents) {
+    if (['presupuesto', 'proforma'].includes(doc.document_type) || ['borrador', 'cancelada'].includes(doc.status)) continue;
     if (doc.direction === 'ingreso') {
       totals.income += Number(doc.total_amount || 0);
       totals.vatIncome += Number(doc.tax_amount || 0);
@@ -1361,6 +1425,15 @@ function accountingSummary(documents = [], dueItems = []) {
       totals.vatExpense += Number(doc.tax_amount || 0);
     }
   }
+  for (const expense of legacyExpenses) {
+    if (expense.status === 'cancelado') continue;
+    totals.expense += Number(expense.total_amount || 0);
+    totals.legacyExpense += Number(expense.total_amount || 0);
+  }
+  for (const item of plannedPurchases) {
+    if (['comprado', 'cancelado', 'descartado'].includes(item.status)) continue;
+    totals.plannedPurchases += Number(item.estimated_unit_price || 0) * Number(item.quantity || 0);
+  }
   for (const item of dueItems) {
     const pending = Math.max(0, Number(item.amount || 0) - Number(item.paid_amount || 0));
     if (item.direction === 'cobrar') totals.toCollect += pending;
@@ -1368,6 +1441,112 @@ function accountingSummary(documents = [], dueItems = []) {
   }
   Object.keys(totals).forEach(key => totals[key] = roundMoney(totals[key]));
   return totals;
+}
+
+function groupAccountingFiles(files = []) {
+  const grouped = {};
+  for (const file of files) {
+    const match = String(file.storage_path || '').match(/\/documents\/([^/]+)\//);
+    if (!match) continue;
+    grouped[match[1]] ||= [];
+    grouped[match[1]].push(file);
+  }
+  return grouped;
+}
+
+async function attachAccountingFile(documentId, input, session) {
+  const document = (await supa('economic_documents', { query: { id: `eq.${documentId}`, limit: '1' } }))[0];
+  if (!document) throw new Error('Documento no encontrado');
+  const parsed = parseUpload(input);
+  const filename = safeFilename(input.filename || input.name || `factura-${document.document_code}.${extensionForMime(parsed.mimeType)}`);
+  const storagePath = `accounting/documents/${document.id}/${Date.now()}-${filename}`;
+  await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
+  const file = (await supa('documents', {
+    method: 'POST',
+    body: [{
+      agency_id: document.agency_id || null,
+      reservation_id: document.reservation_id || null,
+      traveller_id: null,
+      document_type: 'factura_gestoria',
+      title: filename,
+      storage_path: storagePath,
+      visibility: 'admin',
+      uploaded_by_type: 'admin',
+      uploaded_by_id: session.userId || null
+    }]
+  }))[0];
+  await audit(session, 'accounting_file_uploaded', 'documents', file.id, { documentId, storagePath });
+  return file;
+}
+
+function parseUpload(input) {
+  const data = required(input.data, 'Archivo');
+  const mimeType = input.mimeType || String(data).match(/^data:([^;]+);base64,/)?.[1] || 'application/octet-stream';
+  if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+    throw new Error('Formato no permitido. Usa PDF, JPG, PNG o WEBP.');
+  }
+  const base64 = String(data).includes(',') ? String(data).split(',').pop() : String(data);
+  const buffer = Buffer.from(base64, 'base64');
+  if (!buffer.length) throw new Error('Archivo vacio');
+  if (buffer.length > 10 * 1024 * 1024) throw new Error('Archivo demasiado grande. Maximo 10 MB.');
+  return { buffer, mimeType };
+}
+
+async function ensureAccountingBucket() {
+  const url = new URL('/storage/v1/bucket', SUPABASE_URL);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      apikey: SERVICE_KEY,
+      authorization: `Bearer ${SERVICE_KEY}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({ id: ACCOUNTING_BUCKET, name: ACCOUNTING_BUCKET, public: false })
+  });
+  if (res.ok || res.status === 409 || res.status === 400) return;
+  const text = await res.text();
+  throw new Error(text || `No se pudo preparar almacenamiento ${res.status}`);
+}
+
+async function uploadAccountingFile(storagePath, mimeType, buffer) {
+  await ensureAccountingBucket();
+  const url = new URL(`/storage/v1/object/${ACCOUNTING_BUCKET}/${storagePath}`, SUPABASE_URL);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      apikey: SERVICE_KEY,
+      authorization: `Bearer ${SERVICE_KEY}`,
+      'content-type': mimeType,
+      'x-upsert': 'true'
+    },
+    body: buffer
+  });
+  if (!res.ok) throw new Error(await res.text() || `No se pudo subir archivo ${res.status}`);
+}
+
+async function downloadAccountingFile(storagePath) {
+  const url = new URL(`/storage/v1/object/${ACCOUNTING_BUCKET}/${storagePath}`, SUPABASE_URL);
+  const res = await fetch(url, {
+    headers: {
+      apikey: SERVICE_KEY,
+      authorization: `Bearer ${SERVICE_KEY}`
+    }
+  });
+  if (!res.ok) throw new Error(await res.text() || `No se pudo abrir archivo ${res.status}`);
+  return { mimeType: res.headers.get('content-type') || 'application/octet-stream', buffer: Buffer.from(await res.arrayBuffer()) };
+}
+
+function safeFilename(name) {
+  return String(name || 'documento').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'documento';
+}
+
+function extensionForMime(mimeType) {
+  return {
+    'application/pdf': 'pdf',
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp'
+  }[mimeType] || 'bin';
 }
 
 function accountingExportRow(row) {
