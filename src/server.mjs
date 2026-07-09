@@ -630,7 +630,7 @@ async function adminApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/admin/control/summary') {
     try {
-      const [entities, categories, balances, cash, dueItems, tasks, documents, plannedPurchases, legacyExpenses, accountingFiles] = await Promise.all([
+      const [entities, categories, balances, cash, dueItems, tasks, documents, plannedPurchases, legacyExpenses, accountingFiles, agencies, reservations, payments, cashMovements] = await Promise.all([
         supa('entities', { query: { select: 'id,display_name,legal_name,tax_id,main_email,main_phone,status,created_at', order: 'created_at.desc', deleted_at: 'is.null', limit: '12' } }),
         supa('entity_categories', { query: { select: '*', order: 'name.asc' } }),
         supa('v_control_entity_balances', { query: { select: '*' } }),
@@ -640,7 +640,11 @@ async function adminApi(req, res, url) {
         supa('economic_documents', { query: { select: '*,entities(display_name,tax_id)', order: 'issue_date.desc', limit: '200' } }),
         optionalSupa('pc_purchase_items', { query: { select: '*,pc_expense_categories(name),pc_entities(display_name)', order: 'created_at.desc', limit: '200' } }),
         optionalSupa('pc_expenses', { query: { select: '*,pc_expense_categories(name),pc_entities(display_name)', order: 'expense_date.desc', limit: '200' } }),
-        optionalSupa('documents', { query: { select: '*', document_type: 'eq.factura_gestoria', order: 'created_at.desc', limit: '500' } })
+        optionalSupa('documents', { query: { select: '*', document_type: 'eq.factura_gestoria', order: 'created_at.desc', limit: '500' } }),
+        supa('agencies', { query: { select: 'id,agency_code,commercial_name,legal_name,default_commission_rate,access_status,contract_status,created_at', deleted_at: 'is.null', order: 'commercial_name.asc', limit: '500' } }),
+        supa('reservations', { query: { deleted_at: 'is.null', select: '*,agencies(agency_code,commercial_name,default_commission_rate),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at,price_per_traveller)', order: 'created_at.desc', limit: '500' } }),
+        supa('payments', { query: { select: '*,agencies(agency_code,commercial_name),reservations(reservation_code,total_amount,paid_amount)', order: 'created_at.desc', limit: '500' } }),
+        optionalSupa('cash_movements', { query: { select: '*,entities(display_name)', order: 'movement_date.desc', limit: '500' } })
       ]);
       const filesByDocument = groupAccountingFiles(accountingFiles);
       return json(res, 200, {
@@ -655,6 +659,10 @@ async function adminApi(req, res, url) {
         legacyExpenses,
         accountingFiles,
         filesByDocument,
+        agencies,
+        reservations,
+        payments,
+        cashMovements,
         accounting: accountingSummary(documents, dueItems, legacyExpenses, plannedPurchases)
       });
     } catch (error) {
@@ -757,7 +765,7 @@ async function adminApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/accounting\/documents\/[^/]+\/files$/)) {
-    const id = url.pathname.split('/')[4];
+    const id = url.pathname.split('/')[5];
     try {
       const input = await bodyJson(req);
       const file = await attachAccountingFile(id, input, session);
@@ -1414,6 +1422,7 @@ async function findOrCreateAccountingEntity(input) {
 
 function accountingSummary(documents = [], dueItems = [], legacyExpenses = [], plannedPurchases = []) {
   const totals = { income: 0, expense: 0, vatIncome: 0, vatExpense: 0, toCollect: 0, toPay: 0, plannedPurchases: 0, legacyExpense: 0 };
+  const importedLegacyExpenses = new Set(documents.filter(doc => String(doc.document_code || '').startsWith('PC-GASTO-')).map(doc => doc.document_code));
   for (const doc of documents) {
     if (['presupuesto', 'proforma'].includes(doc.document_type) || ['borrador', 'cancelada'].includes(doc.status)) continue;
     if (doc.direction === 'ingreso') {
@@ -1426,6 +1435,8 @@ function accountingSummary(documents = [], dueItems = [], legacyExpenses = [], p
     }
   }
   for (const expense of legacyExpenses) {
+    const legacyCode = `PC-GASTO-${expense.source_row || String(expense.id || '').slice(0, 8)}`;
+    if (importedLegacyExpenses.has(legacyCode)) continue;
     if (expense.status === 'cancelado') continue;
     totals.expense += Number(expense.total_amount || 0);
     totals.legacyExpense += Number(expense.total_amount || 0);
