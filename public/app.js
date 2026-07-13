@@ -182,8 +182,11 @@ async function adminView(view) {
       target.innerHTML = gestoriaDashboard(data);
       document.querySelector('#newAccountingDoc').onclick = () => document.querySelector('#accountingForm').classList.toggle('hidden');
       document.querySelector('#newEntity').onclick = () => document.querySelector('#entityForm').classList.toggle('hidden');
+      document.querySelector('#printGestoria').onclick = () => window.print();
       document.querySelector('#createAccountingDoc')?.addEventListener('submit', createAccountingDocument);
       document.querySelector('#createControlEntity')?.addEventListener('submit', createControlEntity);
+      document.querySelector('#operationCalculator')?.addEventListener('input', updateOperationCalculator);
+      updateOperationCalculator();
       target.querySelectorAll('[data-gestoria-tab]').forEach(btn => btn.onclick = () => showGestoriaTab(btn.dataset.gestoriaTab));
       target.querySelectorAll('[data-accounting-paid]').forEach(btn => btn.onclick = async () => {
         if (!confirm('Marcar como cobrado/pagado?')) return;
@@ -509,7 +512,7 @@ function accountingDocumentForm() {
 function gestoriaDashboard(data) {
   const model = buildGestoriaModel(data);
   return html`
-    <div class="toolbar"><h2>Gestoria</h2><div class="actions"><button id="newAccountingDoc">Nuevo ingreso/gasto</button><button class="ghost" id="newEntity">Nueva entidad</button></div></div>
+    <div class="toolbar"><h2>Gestoria</h2><div class="actions"><button id="printGestoria">Imprimir</button><button id="newAccountingDoc">Nuevo ingreso/gasto</button><button class="ghost" id="newEntity">Nueva entidad</button></div></div>
     <div class="grid gestoria-metrics">
       ${metric('Cobrado real', money(model.totalCollected))}
       ${metric('Pendiente de cobrar', money(model.totalToCollect))}
@@ -522,6 +525,7 @@ function gestoriaDashboard(data) {
     <div id="entityForm" class="panel hidden">${controlEntityForm(data.categories || [])}</div>
     <div class="gestoria-tabs">
       ${gestoriaTabButton('resumen', 'Resumen', true)}
+      ${gestoriaTabButton('operacion', 'Calculadora operacion')}
       ${gestoriaTabButton('cobros', 'Cobros')}
       ${gestoriaTabButton('pagos', 'Pagos')}
       ${gestoriaTabButton('emitidas', 'Facturas emitidas')}
@@ -533,6 +537,7 @@ function gestoriaDashboard(data) {
       ${gestoriaTabButton('informes', 'Informes')}
     </div>
     <section class="gestoria-section" data-gestoria-section="resumen">${gestoriaResumen(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="operacion">${gestoriaOperacion(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="cobros">${gestoriaCobros(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="pagos">${gestoriaPagos(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="emitidas">${gestoriaFacturasEmitidas(model)}</section>
@@ -615,6 +620,63 @@ function gestoriaResumen(model) {
       ['Facturas adjuntas', `${Object.keys(model.filesByDocument).length} documentos con archivo`, 'Subir tickets/facturas que falten']
     ])}
   `;
+}
+
+function gestoriaOperacion(model) {
+  const defaultSale = Math.max(model.totalReservationSales || 0, 1149);
+  const defaultCost = Math.max(model.totalExpense || 0, 0);
+  const defaultPaid = Math.max(model.totalReservationPaid || 0, 0);
+  return html`
+    <div class="panel print-section">
+      <h3>Calculadora de operacion</h3>
+      <p class="muted">Calcula una reserva, salida, grupo o compra antes de registrarla. No modifica datos hasta que crees el ingreso/gasto correspondiente.</p>
+      <form id="operationCalculator" class="form-grid compact calculator">
+        <label>Venta / ingreso previsto<input name="sale" type="number" step="0.01" value="${defaultSale}"></label>
+        <label>Costes / pagos previstos<input name="cost" type="number" step="0.01" value="${defaultCost}"></label>
+        <label>Comision agencia %<input name="commissionPct" type="number" step="0.01" value="10"></label>
+        <label>IVA ventas %<input name="vatIncomePct" type="number" step="0.01" value="21"></label>
+        <label>IVA gastos %<input name="vatExpensePct" type="number" step="0.01" value="21"></label>
+        <label>Cobrado hasta ahora<input name="collected" type="number" step="0.01" value="${defaultPaid}"></label>
+        <label>Pagado hasta ahora<input name="paid" type="number" step="0.01" value="${model.totalPaidExpense || 0}"></label>
+        <label>Otros ajustes<input name="adjustments" type="number" step="0.01" value="0"></label>
+      </form>
+      <div id="operationResult" class="grid gestoria-metrics"></div>
+    </div>
+    <div class="notice">Para imprimir esta calculadora o cualquier informe, pulsa <strong>Imprimir</strong> arriba. Puedes guardar como PDF desde la ventana de impresion.</div>
+  `;
+}
+
+function updateOperationCalculator() {
+  const form = document.querySelector('#operationCalculator');
+  const output = document.querySelector('#operationResult');
+  if (!form || !output) return;
+  const value = name => Number(form.elements[name]?.value || 0);
+  const sale = value('sale');
+  const cost = value('cost');
+  const commissionPct = value('commissionPct') / 100;
+  const vatIncomePct = value('vatIncomePct') / 100;
+  const vatExpensePct = value('vatExpensePct') / 100;
+  const collected = value('collected');
+  const paid = value('paid');
+  const adjustments = value('adjustments');
+  const commission = sale * commissionPct;
+  const incomeVat = sale * vatIncomePct / (1 + vatIncomePct);
+  const expenseVat = cost * vatExpensePct / (1 + vatExpensePct);
+  const grossMargin = sale - cost - commission + adjustments;
+  const marginPct = sale ? (grossMargin / sale) * 100 : 0;
+  const pendingCollect = Math.max(0, sale - collected);
+  const pendingPay = Math.max(0, cost + commission - paid);
+  const cashResult = collected - paid;
+  output.innerHTML = [
+    metric('Comision agencia', money(commission)),
+    metric('Beneficio / margen bruto', money(grossMargin)),
+    metric('Margen sobre venta', `${marginPct.toFixed(2)}%`),
+    metric('IVA repercutido estimado', money(incomeVat)),
+    metric('IVA soportado estimado', money(expenseVat)),
+    metric('Caja ahora', money(cashResult)),
+    metric('Pendiente de cobrar', money(pendingCollect)),
+    metric('Pendiente de pagar', money(pendingPay))
+  ].join('');
 }
 
 function gestoriaCobros(model) {
