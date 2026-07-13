@@ -88,10 +88,26 @@ th { background: #f8faf8; color: #33413d; font-size: 13px; }
 }
 .gestoria-tabs button.active { background: var(--brand); color: #fff; border-color: var(--brand); }
 .gestoria-section { display: grid; gap: 14px; }
+.compact label { margin: 8px 0; }
+.calculator input { font-weight: 700; }
 
 @media (max-width: 860px) {
   .app { padding: 14px; }
   .login-grid, .layout, .grid, .grid.two, .form-grid, .gestoria-metrics { grid-template-columns: 1fr; }
   .side { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .topbar { height: auto; min-height: 62px; gap: 10px; }
+}
+
+@media print {
+  body { background: #fff; color: #000; }
+  .topbar, .side, .toolbar .actions, .gestoria-tabs, button, .button-link { display: none !important; }
+  .app { max-width: none; padding: 0; }
+  .layout { display: block; }
+  .panel, .card, .table-wrap { box-shadow: none; border-color: #999; }
+  .hidden { display: none !important; }
+  .gestoria-section:not(.hidden) { display: grid !important; }
+  table { min-width: 0; font-size: 11px; }
+  th, td { padding: 6px; }
+  .metric { color: #000; font-size: 20px; }
+  a { color: #000; text-decoration: none; }
 }
