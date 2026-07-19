@@ -252,10 +252,16 @@ async function adminView(view) {
   }
   if (view === 'adminReservations') {
     const { reservations } = await api('/api/admin/reservations');
-    target.innerHTML = html`<h2>Reservas</h2><div class="notice">Bloquear plazas = apartarlas temporalmente. Confirmar reserva = queda aceptada, aunque el pago siga pendiente.</div><div id="reservationDetail"></div>${table(['Acciones','Codigo','Agencia','Salida','Viajeros','Total','Pagado','Pendiente','Estado pago','Estado reserva'], reservations.map(r => [
-      reservationActions(r),
-      r.reservation_code, r.agencies?.commercial_name, r.departures?.departure_code, r.requested_places, money(r.total_amount), money(r.paid_amount), money(Number(r.total_amount || 0) - Number(r.paid_amount || 0)), paymentStatus(r), badge(r.status)
-    ]))}`;
+    target.innerHTML = html`
+      <h2>Reservas</h2>
+      <div class="notice">Bloquear plazas = apartarlas temporalmente. Confirmar reserva = queda aceptada, aunque el pago siga pendiente.</div>
+      <div id="reservationDetail"></div>
+      ${reservationCards(reservations)}
+      <h3>Tabla completa</h3>
+      ${table(['Acciones','Codigo','Agencia','Salida','Viajeros','Total','Pagado','Pendiente','Estado pago','Estado reserva'], reservations.map(r => [
+        reservationActions(r),
+        r.reservation_code, r.agencies?.commercial_name, r.departures?.departure_code, r.requested_places, money(r.total_amount), money(r.paid_amount), money(Number(r.total_amount || 0) - Number(r.paid_amount || 0)), paymentStatus(r), badge(r.status)
+      ]))}`;
     bindAdminReservationButtons(target);
   }
   if (view === 'adminTravellers') {
@@ -400,6 +406,28 @@ function paymentStatus(r) {
   if (required > 0 && paid >= required) return 'senal pagada';
   if (paid > 0) return 'pago parcial';
   return 'pendiente pago';
+}
+
+function reservationCards(reservations) {
+  if (!reservations.length) return '<div class="panel muted">Sin reservas todavia.</div>';
+  return '<div class="reservation-list">' + reservations.map(r => {
+    const pending = Number(r.total_amount || 0) - Number(r.paid_amount || 0);
+    return '<section class="panel reservation-card">' +
+      '<div class="reservation-main">' +
+        '<div><h3>' + esc(r.reservation_code || 'Reserva') + '</h3>' +
+        '<p class="muted">' + esc(r.agencies?.commercial_name || '') + ' - ' + esc(r.departures?.departure_code || '') + '</p></div>' +
+        '<div class="actions">' + reservationActions(r) + '</div>' +
+      '</div>' +
+      '<div class="reservation-facts">' +
+        '<span><strong>Viajeros</strong> ' + esc(r.requested_places || 0) + '</span>' +
+        '<span><strong>Total</strong> ' + money(r.total_amount) + '</span>' +
+        '<span><strong>Pagado</strong> ' + money(r.paid_amount) + '</span>' +
+        '<span><strong>Pendiente</strong> ' + money(pending) + '</span>' +
+        '<span><strong>Pago</strong> ' + paymentStatus(r) + '</span>' +
+        '<span><strong>Estado</strong> ' + badge(r.status) + '</span>' +
+      '</div>' +
+    '</section>';
+  }).join('') + '</div>';
 }
 
 function reservationActions(r) {
