@@ -167,6 +167,44 @@ async function optionalSupa(path, options = {}, fallback = []) {
   }
 }
 
+const BACKUP_TABLES = ['agencies','agency_users','departures','departure_inventory','reservations','travellers','payments','incidents','documents','leads','lead_history','notifications','reservation_status_history','audit_logs'];
+
+function validateBackupPayload(backup) {
+  if (!backup || typeof backup !== 'object' || Array.isArray(backup)) throw new Error('El cuerpo de la copia no es valido.');
+  if (backup.app !== 'PROYEKTA VIAJES portal agencias') throw new Error('La copia no pertenece al portal de agencias de PROYEKTA.');
+  if (![1, 2].includes(Number(backup.version))) throw new Error(`Version de copia no compatible: ${backup.version ?? 'sin version'}.`);
+  if (!backup.tables || typeof backup.tables !== 'object' || Array.isArray(backup.tables)) throw new Error('Falta el bloque de tablas.');
+  const names = Object.keys(backup.tables);
+  if (!names.length || names.some(name => !BACKUP_TABLES.includes(name))) throw new Error('La copia contiene tablas no permitidas.');
+  let total = 0;
+  for (const name of names) {
+    const rows = backup.tables[name];
+    if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object' || Array.isArray(row))) throw new Error(`La tabla ${name} no tiene registros validos.`);
+    total += rows.length;
+  }
+  if (total > 100000) throw new Error('La copia supera el limite de 100.000 registros.');
+  return { names, total };
+}
+
+async function restoreBackup(backup) {
+  const { names, total } = validateBackupPayload(backup);
+  const snapshot = {};
+  for (const name of names) snapshot[name] = await supa(name, { query: { select: '*' } });
+  try {
+    const counts = {};
+    for (const name of names) {
+      const rows = backup.tables[name];
+      if (rows.length) await supa(name, { method: 'POST', query: { on_conflict: 'id' }, body: rows });
+      counts[name] = rows.length;
+    }
+    return { counts, total };
+  } catch (error) {
+    for (const name of names) {
+      try { if (snapshot[name].length) await supa(name, { method: 'POST', query: { on_conflict: 'id' }, body: snapshot[name] }); } catch {}
+    }
+    throw new Error(`No se pudo completar la restauracion y se intento revertir: ${error.message}`);
+  }
+}
 async function audit(session, action, entityType, entityId, metadata = {}) {
   await supa('audit_logs', {
     method: 'POST',
@@ -1131,6 +1169,17 @@ async function adminApi(req, res, url) {
     return downloadJson(res, `proyekta_backup_completo_${stamp}.json`, { exported_at: new Date().toISOString(), app: 'PROYEKTA VIAJES portal agencias', version: 1, tables });
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/admin/backup/restore') {
+    try {
+      const input = await bodyJson(req);
+      if (input.confirmation !== 'RESTAURAR') return json(res, 400, { error: 'Confirmacion requerida: escribe RESTAURAR.' });
+      const result = await restoreBackup(input.backup);
+      await audit(session, 'backup_json_restore', 'backup', null, { tables: Object.keys(input.backup.tables), counts: result.counts });
+      return json(res, 200, { message: 'La copia se ha restaurado correctamente.', counts: result.counts });
+    } catch (error) {
+      return json(res, 400, { error: error.message || 'No se pudo restaurar la copia.' });
+    }
+  }
   if (req.method === 'GET' && url.pathname.startsWith('/api/admin/export/')) {
     const type = url.pathname.split('/').pop();
     const stamp = new Date().toISOString().slice(0, 10);

@@ -290,8 +290,9 @@ async function adminView(view) {
         <section class="panel"><h3>Copia completa</h3><p>Incluye agencias, salidas, reservas, viajeros, pagos, incidencias, documentos y movimientos principales.</p><a class="button-link" href="/api/admin/backup/full" target="_blank">Descargar copia JSON</a></section>
         <section class="panel"><h3>CSV para Excel</h3><p>Exportaciones separadas para revisar o enviar a gestoria.</p><div class="actions">${exportCard('Viajeros', 'travellers')}${exportCard('Reservas', 'reservations')}</div></section>
       </div>
-      <section class="panel"><h3>Restaurar copia</h3><p class="muted">La restauracion automatica queda protegida: antes de sobrescribir datos se revisara el archivo. De momento usa la copia JSON como respaldo valido y portable.</p><input type="file" id="backupCheck" accept="application/json"><div id="backupCheckResult"></div></section>`;
+      <section class="panel"><h3>Restaurar copia</h3><div class="danger"><strong>Atencion:</strong> restaurar una copia sobrescribe los datos actuales incluidos en ella.</div><p>1. Selecciona la copia JSON. 2. Revisa las tablas detectadas. 3. Pulsa el boton para cargarla.</p><input type="file" id="backupCheck" accept="application/json,.json"><div id="backupCheckResult"></div><div class="actions"><button id="restoreBackup" type="button" disabled>Restaurar copia seleccionada</button></div></section>`;
     document.querySelector('#backupCheck')?.addEventListener('change', previewBackupFile);
+    document.querySelector('#restoreBackup')?.addEventListener('click', restoreSelectedBackup);
   }
   if (view === 'adminPayments') {
     const { payments } = await api('/api/admin/payments');
@@ -1445,21 +1446,62 @@ async function uploadTravellerDocument(travellerId) {
   input.click();
 }
 
+let selectedBackup = null;
+
 function previewBackupFile(e) {
   const file = e.target.files?.[0];
   const box = document.querySelector('#backupCheckResult');
+  const button = document.querySelector('#restoreBackup');
+  selectedBackup = null;
+  if (button) button.disabled = true;
   if (!file || !box) return;
+  if (file.size > 25 * 1024 * 1024) {
+    box.innerHTML = '<p class="danger">El archivo supera el maximo permitido de 25 MB.</p>';
+    return;
+  }
   const reader = new FileReader();
   reader.onload = () => {
     try {
       const data = JSON.parse(reader.result);
-      const keys = Object.keys(data.tables || data || {});
-      box.innerHTML = `<p class="notice">Copia legible. Tablas detectadas: ${keys.map(esc).join(', ') || 'sin tablas'}.</p>`;
-    } catch {
-      box.innerHTML = '<p class="danger">El archivo no parece una copia JSON valida.</p>';
+      if (!data || typeof data !== 'object' || Array.isArray(data) || !data.tables || typeof data.tables !== 'object' || Array.isArray(data.tables)) throw new Error('Falta el bloque de tablas.');
+      if (data.app !== 'PROYEKTA VIAJES portal agencias') throw new Error('La copia no pertenece al portal de agencias de PROYEKTA.');
+      if (![1, 2].includes(Number(data.version))) throw new Error(`Version de copia no compatible: ${data.version ?? 'sin version'}.`);
+      const keys = Object.keys(data.tables);
+      if (!keys.length || keys.some(key => !Array.isArray(data.tables[key]))) throw new Error('La copia no contiene tablas validas.');
+      selectedBackup = data;
+      if (button) button.disabled = false;
+      const rows = keys.reduce((total, key) => total + data.tables[key].length, 0);
+      box.innerHTML = `<p class="notice"><strong>Copia valida y lista para restaurar.</strong><br>Version: ${esc(data.version)}. Registros: ${rows}.<br>Tablas detectadas: ${keys.map(esc).join(', ')}.</p>`;
+    } catch (error) {
+      selectedBackup = null;
+      if (button) button.disabled = true;
+      box.innerHTML = `<p class="danger">No se puede usar este archivo: ${esc(error.message || 'JSON no valido')}.</p>`;
     }
   };
+  reader.onerror = () => { box.innerHTML = '<p class="danger">No se pudo leer el archivo seleccionado.</p>'; };
   reader.readAsText(file);
+}
+
+async function restoreSelectedBackup() {
+  const button = document.querySelector('#restoreBackup');
+  const box = document.querySelector('#backupCheckResult');
+  if (!selectedBackup || !button || !box) return alert('Primero selecciona una copia JSON valida.');
+  const confirmation = prompt('ATENCION: se sobrescribiran los datos actuales incluidos en la copia.\n\nEscribe RESTAURAR para continuar:');
+  if (confirmation !== 'RESTAURAR') return alert('Restauracion cancelada. No se ha modificado ningun dato.');
+  button.disabled = true;
+  button.textContent = 'Restaurando...';
+  box.innerHTML += '<p class="notice">Restauracion en curso. No cierres esta pagina.</p>';
+  try {
+    const result = await api('/api/admin/backup/restore', { method: 'POST', body: { confirmation, backup: selectedBackup } });
+    const counts = Object.entries(result.counts || {}).map(([name, count]) => `${name}: ${count}`).join(', ');
+    box.innerHTML = `<p class="notice"><strong>Copia restaurada correctamente.</strong><br>${esc(result.message || '')}${counts ? `<br>Registros restaurados: ${esc(counts)}.` : ''}</p>`;
+    alert('Copia restaurada correctamente.');
+  } catch (error) {
+    box.innerHTML = `<p class="danger"><strong>No se ha restaurado la copia.</strong><br>${esc(error.message || 'Error desconocido')}. La operacion se ha revertido.</p>`;
+    button.disabled = false;
+  } finally {
+    button.textContent = 'Restaurar copia seleccionada';
+  }
 }
 
 function reservationForm(departures) {
