@@ -252,9 +252,9 @@ async function adminView(view) {
   }
   if (view === 'adminReservations') {
     const { reservations } = await api('/api/admin/reservations');
-    target.innerHTML = html`<h2>Reservas</h2><div class="notice">Bloquear plazas = apartarlas temporalmente. Confirmar reserva = queda aceptada, aunque el pago siga pendiente.</div><div id="reservationDetail"></div>${table(['Codigo','Agencia','Email pago','Email agencia','Salida','Viajeros','Total','Senal','Pagado','Estado pago','Bloqueo','Estado reserva','Acciones'], reservations.map(r => [
-      r.reservation_code, r.agencies?.commercial_name, r.lead_traveller_email || r.agencies?.main_email || '', r.agencies?.main_email || '', r.departures?.departure_code, r.requested_places, money(r.total_amount), money(r.required_payment || 0), money(r.paid_amount), paymentStatus(r), formatDateTime(r.block_expires_at), badge(r.status),
-      reservationActions(r)
+    target.innerHTML = html`<h2>Reservas</h2><div class="notice">Bloquear plazas = apartarlas temporalmente. Confirmar reserva = queda aceptada, aunque el pago siga pendiente.</div><div id="reservationDetail"></div>${table(['Acciones','Codigo','Agencia','Salida','Viajeros','Total','Pagado','Pendiente','Estado pago','Estado reserva'], reservations.map(r => [
+      reservationActions(r),
+      r.reservation_code, r.agencies?.commercial_name, r.departures?.departure_code, r.requested_places, money(r.total_amount), money(r.paid_amount), money(Number(r.total_amount || 0) - Number(r.paid_amount || 0)), paymentStatus(r), badge(r.status)
     ]))}`;
     bindAdminReservationButtons(target);
   }
@@ -1297,7 +1297,7 @@ function accountingDocActions(doc, files = []) {
 function paymentActions(p) {
   const buttons = [];
   if (p.status !== 'verificado') buttons.push(`<button data-verify="${p.id}">Verificar</button>`);
-  if (p.status === 'verificado' && Number(p.amount || 0) > 0) buttons.push(`<button class="ghost" data-refund-payment="${p.id}">Devolver</button>`);
+  if (p.status === 'verificado' && Number(p.amount || 0) > 0) buttons.push(`<button class="ghost" data-refund-payment="${p.id}" data-amount="${p.amount}">Devolver</button>`);
   if (!['anulado','devuelto'].includes(p.status)) buttons.push(`<button class="ghost" data-cancel-payment="${p.id}">Anular</button>`);
   buttons.push(`<button class="ghost danger" data-delete-payment="${p.id}">Borrar</button>`);
   return `<div class="actions">${buttons.join('')}</div>`;
@@ -1311,19 +1311,34 @@ function bindAdminPaymentButtons(target) {
   });
   target.querySelectorAll('[data-cancel-payment]').forEach(btn => btn.onclick = async () => {
     if (!confirm('Anular este pago y recalcular la reserva?')) return;
-    await api(`/api/admin/payments/${btn.dataset.cancelPayment}/cancel`, { method: 'PATCH' });
-    adminView('adminPayments');
+    try {
+      await api(`/api/admin/payments/${btn.dataset.cancelPayment}/cancel`, { method: 'PATCH' });
+      alert('Pago anulado. La reserva se ha recalculado.');
+      adminView('adminPayments');
+    } catch (err) {
+      alert('No se pudo anular el pago: ' + err.message);
+    }
   });
   target.querySelectorAll('[data-refund-payment]').forEach(btn => btn.onclick = async () => {
-    const amount = prompt('Importe a devolver:', '');
+    const amount = prompt('Importe a devolver:', btn.dataset.amount || '');
     if (amount === null) return;
-    await api(`/api/admin/payments/${btn.dataset.refundPayment}/refund`, { method: 'POST', body: { amount: parseMoneyInput(amount) } });
-    adminView('adminPayments');
+    try {
+      const result = await api(`/api/admin/payments/${btn.dataset.refundPayment}/refund`, { method: 'POST', body: { amount: parseMoneyInput(amount) } });
+      alert(`Devolucion registrada. Pagado en la reserva ahora: ${money(result.reservation?.paid_amount || 0)}`);
+      adminView('adminPayments');
+    } catch (err) {
+      alert('No se pudo devolver el pago: ' + err.message);
+    }
   });
   target.querySelectorAll('[data-delete-payment]').forEach(btn => btn.onclick = async () => {
     if (!confirm('Borrar este pago definitivamente? Si era valido, se recalculara la reserva.')) return;
-    await api(`/api/admin/payments/${btn.dataset.deletePayment}`, { method: 'DELETE' });
-    adminView('adminPayments');
+    try {
+      await api(`/api/admin/payments/${btn.dataset.deletePayment}`, { method: 'DELETE' });
+      alert('Pago borrado. La reserva se ha recalculado.');
+      adminView('adminPayments');
+    } catch (err) {
+      alert('No se pudo borrar el pago: ' + err.message);
+    }
   });
 }
 function travellersTable(rows) {

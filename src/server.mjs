@@ -992,13 +992,19 @@ async function adminApi(req, res, url) {
     const input = await bodyJson(req);
     const original = (await supa('payments', { query: { id: `eq.${id}`, limit: '1' } }))[0];
     if (!original) return json(res, 404, { error: 'Pago no encontrado' });
-    const requested = roundMoney(input.amount || original.amount);
-    const amount = Math.min(Math.abs(requested), Math.abs(Number(original.amount || 0)));
+    if (original.status !== 'verificado') return json(res, 400, { error: 'Solo se puede devolver un pago verificado' });
+    const originalAmount = Number(original.amount || 0);
+    const requested = roundMoney(input.amount || originalAmount);
+    const amount = Math.min(Math.abs(requested), Math.abs(originalAmount));
     if (!Number.isFinite(amount) || amount <= 0) return json(res, 400, { error: 'Importe de devolucion no valido' });
-    const refund = (await supa('payments', { method: 'POST', body: [{ reservation_id: original.reservation_id || null, agency_id: original.agency_id || null, payer_name: original.payer_name || null, amount: -amount, concept: `Devolucion de pago ${id}`, method: original.method || 'transferencia', status: 'verificado', external_reference: input.externalReference || null, verified_by_admin_id: session.userId, verified_at: new Date().toISOString() }] }))[0];
+    const remaining = roundMoney(originalAmount - amount);
+    const patch = remaining > 0
+      ? { amount: remaining, concept: `${original.concept || 'Pago'} | devolucion parcial ${formatEuro(amount)}` }
+      : { amount: 0, status: 'anulado', concept: `${original.concept || 'Pago'} | devuelto ${formatEuro(amount)}` };
+    const payment = (await supa('payments', { method: 'PATCH', query: { id: `eq.${id}` }, body: patch }))[0];
     const reservation = original.reservation_id ? await updateReservationPaidAmount(original.reservation_id) : null;
-    await audit(session, 'payment_refunded', 'payments', refund.id, { original_payment_id: id, amount });
-    return json(res, 201, { payment: refund, reservation });
+    await audit(session, 'payment_refunded', 'payments', id, { amount, remaining, reservation_id: original.reservation_id || null });
+    return json(res, 200, { payment, reservation, refundedAmount: amount });
   }
 
   if (req.method === 'DELETE' && url.pathname.match(/^\/api\/admin\/payments\/[^/]+$/)) {
