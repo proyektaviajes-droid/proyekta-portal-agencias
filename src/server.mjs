@@ -802,6 +802,55 @@ async function adminApi(req, res, url) {
     return json(res, 200, { instructions });
   }
 
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+\/payments$/)) {
+    const id = url.pathname.split('/')[4];
+    const input = await bodyJson(req);
+    const reservation = await getReservationWithContext(id);
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    if (reservation.status === 'cancelada') return json(res, 400, { error: 'No se puede registrar un pago en una reserva anulada' });
+    const amount = roundMoney(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return json(res, 400, { error: 'Importe de pago no valido' });
+    const payment = (await supa('payments', { method: 'POST', body: [{
+      reservation_id: id,
+      agency_id: reservation.agency_id,
+      payer_name: input.payerName || reservation.lead_traveller_name || reservation.agencies?.commercial_name || null,
+      amount,
+      concept: input.concept || `Reserva ${reservation.reservation_code}`,
+      method: input.method || 'transferencia',
+      status: 'verificado',
+      external_reference: input.externalReference || null,
+      verified_by_admin_id: session.userId,
+      verified_at: new Date().toISOString()
+    }] }))[0];
+    let updated = await updateReservationPaidAmount(id);
+    if (input.confirm && updated.status !== 'confirmada') {
+      const before = await getReservationWithContext(id);
+      updated = (await supa('reservations', { method: 'PATCH', query: { id: `eq.${id}` }, body: { status: 'confirmada', confirmed_at: new Date().toISOString(), required_payment: Number(updated.required_payment || requiredPaymentForReservation(reservation)) } }))[0];
+      await supa('reservation_status_history', { method: 'POST', body: [{ reservation_id: id, old_status: before.status, new_status: 'confirmada', actor_type: 'admin', actor_id: session.userId, reason: 'Confirmada al registrar pago por administrador' }] });
+      await adjustInventoryForReservationChange(before, updated).catch(error => console.error('No se pudo actualizar inventario:', error));
+    }
+    await audit(session, 'admin_payment_registered', 'payments', payment.id, { reservation_id: id, amount, confirm: Boolean(input.confirm) });
+    return json(res, 201, { payment, reservation: updated, readyToConfirm: Number(updated?.paid_amount || 0) >= Number(updated?.required_payment || 0) });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+\/traveller-from-lead$/)) {
+    const id = url.pathname.split('/')[4];
+    const reservation = await getReservationWithContext(id);
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const existing = (await optionalSupa('travellers', { query: { reservation_id: `eq.${id}`, limit: '1' } }, []))[0];
+    if (existing) return json(res, 200, { traveller: existing, alreadyExists: true });
+    const traveller = (await supa('travellers', { method: 'POST', body: [{
+      first_name: reservation.lead_traveller_name || 'Titular reserva',
+      last_name_1: '-',
+      phone: reservation.lead_traveller_phone || null,
+      email: reservation.lead_traveller_email || null,
+      agency_id: reservation.agency_id || null,
+      reservation_id: id,
+      observations: 'Ficha creada desde el titular de la reserva por PROYEKTA.'
+    }] }))[0];
+    await audit(session, 'traveller_created_from_reservation', 'travellers', traveller.id, { reservation_id: id });
+    return json(res, 201, { traveller });
+  }
   if (req.method === 'DELETE' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+$/)) {
     const id = url.pathname.split('/')[4];
     const current = await getReservationWithContext(id);

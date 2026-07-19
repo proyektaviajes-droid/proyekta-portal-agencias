@@ -406,7 +406,10 @@ function reservationActions(r) {
     buttons.push(`<button data-res-action="confirm" data-id="${r.id}">Confirmar reserva</button>`);
   }
   buttons.push(`<button class="ghost" data-pay-instructions="${r.id}">Instrucciones pago</button>`);
-  buttons.push(`<button class="ghost" data-register-admin-payment="${r.id}">Registrar pago</button>`);
+  if (r.status !== 'cancelada') {
+    buttons.push(`<button data-confirm-paid="${r.id}">Confirmar y registrar pago</button>`);
+    buttons.push(`<button class="ghost" data-register-admin-payment="${r.id}">Registrar pago</button>`);
+  }
   if (r.status !== 'cancelada') buttons.push(`<button class="ghost" data-res-action="cancel" data-id="${r.id}">Anular</button>`);
   buttons.push(`<button class="ghost danger" data-delete-reservation="${r.id}" data-code="${esc(r.reservation_code)}">Borrar</button>`);
   return `<div class="actions">${buttons.join('')}</div>`;
@@ -439,13 +442,42 @@ function bindAdminReservationButtons(target) {
     showPaymentInstructions(data.instructions);
   });
   target.querySelectorAll('[data-register-admin-payment]').forEach(btn => btn.onclick = async () => {
-    const current = await api(`/api/admin/reservations/${btn.dataset.registerAdminPayment}`);
-    const r = current.reservation;
-    const amount = prompt('Importe pagado total acumulado para esta reserva:', r.paid_amount || 0);
-    if (amount === null) return;
-    await api(`/api/admin/reservations/${r.id}`, { method: 'PATCH', body: { paid_amount: Number(String(amount).replace(',', '.')) } });
-    await refreshOpenReservation(r.id);
+    try {
+      const current = await api(`/api/admin/reservations/${btn.dataset.registerAdminPayment}`);
+      const r = current.reservation;
+      const pending = Math.max(0, Number(r.total_amount || 0) - Number(r.paid_amount || 0));
+      const amount = prompt('Importe de ESTE pago:', pending || r.required_payment || r.total_amount || 0);
+      if (amount === null) return;
+      const concept = prompt('Concepto del pago:', `Reserva ${r.reservation_code}`);
+      if (concept === null) return;
+      await api(`/api/admin/reservations/${r.id}/payments`, { method: 'POST', body: { amount: parseMoneyInput(amount), concept } });
+      await adminView('adminReservations');
+      await openAdminReservation(r.id);
+    } catch (err) {
+      alert('No se pudo registrar el pago: ' + err.message);
+    }
   });
+  target.querySelectorAll('[data-confirm-paid]').forEach(btn => btn.onclick = async () => {
+    try {
+      const current = await api(`/api/admin/reservations/${btn.dataset.confirmPaid}`);
+      const r = current.reservation;
+      const pending = Math.max(0, Number(r.total_amount || 0) - Number(r.paid_amount || 0));
+      const amount = prompt('Importe pagado para confirmar la reserva:', pending || r.total_amount || r.required_payment || 0);
+      if (amount === null) return;
+      await api(`/api/admin/reservations/${r.id}/payments`, { method: 'POST', body: { amount: parseMoneyInput(amount), concept: `Reserva ${r.reservation_code}`, confirm: true } });
+      await adminView('adminReservations');
+      await openAdminReservation(r.id);
+    } catch (err) {
+      alert('No se pudo confirmar con pago: ' + err.message);
+    }
+  });
+}
+
+function parseMoneyInput(value) {
+  const clean = String(value ?? '').trim().replace(/\s/g, '').replace(',', '.');
+  const amount = Number(clean);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Importe no valido');
+  return Math.round(amount * 100) / 100;
 }
 
 async function openAdminReservation(id) {
@@ -696,12 +728,22 @@ async function convertAgencyLead(id) {
   adminView('adminAgencies');
 }
 function agencyActions(agency) {
-  const buttons = [`<button data-invite="${agency.id}">Generar invitaciÃ³n</button>`];
+  const buttons = [];
+  if (agency.access_status === 'activa') {
+    buttons.push(`<span class="status">Acceso activo</span>`);
+    buttons.push(`<button class="ghost" data-invite="${agency.id}">Reenviar acceso</button>`);
+  } else if (agency.access_status === 'invitacion_pendiente') {
+    buttons.push(`<span class="status">Invitacion enviada</span>`);
+    buttons.push(`<button data-invite="${agency.id}">Reenviar acceso</button>`);
+  } else if (agency.access_status === 'bloqueada' || agency.access_status === 'desactivada') {
+    buttons.push(`<span class="status danger">Acceso ${esc(agency.access_status)}</span>`);
+    buttons.push(`<button class="ghost" data-access="activa" data-id="${agency.id}">Reactivar</button>`);
+  } else {
+    buttons.push(`<button data-invite="${agency.id}">Enviar primer acceso</button>`);
+  }
   if (agency.access_status === 'activa' || agency.access_status === 'invitacion_pendiente') {
     buttons.push(`<button class="ghost" data-access="bloqueada" data-id="${agency.id}">Bloquear</button>`);
     buttons.push(`<button class="ghost" data-access="desactivada" data-id="${agency.id}">Desactivar</button>`);
-  } else {
-    buttons.push(`<button class="ghost" data-access="activa" data-id="${agency.id}">Reactivar</button>`);
   }
   if (agency.contract_status !== 'recibido_pendiente_revision') {
     buttons.push(`<button class="ghost" data-contract="received" data-id="${agency.id}">Marcar contrato recibido</button>`);
@@ -1253,7 +1295,7 @@ function travellersTable(rows) {
   return table(['Nombre','DNI','Telefono','Email','Agencia','Reserva','Salida','Habitacion','Documentos','Acciones'], rows.map(t => {
     const isLead = String(t.id || '').startsWith('reservation:');
     const actions = isLead
-      ? `<div class="actions"><button data-open-traveller="${t.id}">Abrir titular</button><span class="status">Pendiente ficha viajero</span></div>`
+      ? `<div class="actions"><button data-open-traveller="${t.id}">Abrir titular</button><button data-create-lead-traveller="${t.reservation_id}">Crear ficha viajero</button><span class="status">Pendiente ficha viajero</span></div>`
       : `<div class="actions"><button data-open-traveller="${t.id}">Abrir ficha</button><button class="ghost" data-upload-traveller-doc="${t.id}">Subir documento</button></div>`;
     return [fullName(t), t.document_number || t.identity_document || '', t.phone || '', t.email || '', t.agencies?.commercial_name || '', t.reservations?.reservation_code || '', t.reservations?.departures?.departure_code || '', t.room_type || '', t.documents_count || 0, actions];
   }));
@@ -1262,6 +1304,15 @@ function travellersTable(rows) {
 function bindAdminTravellerButtons(target) {
   target.querySelectorAll('[data-open-traveller]').forEach(btn => btn.onclick = () => openAdminTraveller(btn.dataset.openTraveller));
   target.querySelectorAll('[data-upload-traveller-doc]').forEach(btn => btn.onclick = () => uploadTravellerDocument(btn.dataset.uploadTravellerDoc));
+  target.querySelectorAll('[data-create-lead-traveller]').forEach(btn => btn.onclick = () => createTravellerFromReservation(btn.dataset.createLeadTraveller));
+}
+
+async function createTravellerFromReservation(reservationId) {
+  if (!confirm('Crear ficha de viajero con los datos del titular de la reserva?')) return;
+  const data = await api(`/api/admin/reservations/${reservationId}/traveller-from-lead`, { method: 'POST' });
+  alert('Ficha de viajero creada. Ya puedes subir documentacion.');
+  await adminView('adminTravellers');
+  await openAdminTraveller(data.traveller.id);
 }
 
 async function openAdminTraveller(id) {
@@ -1270,8 +1321,9 @@ async function openAdminTraveller(id) {
   if (String(id || '').startsWith('reservation:')) {
     const t = (state.adminTravellers || []).find(x => String(x.id) === String(id));
     if (!t) return;
-    box.innerHTML = `<section class="panel"><div class="toolbar"><h3>${esc(fullName(t))}</h3><button class="ghost" data-close-traveller>Cerrar ficha</button></div><div class="notice">Este cliente viene del titular de la reserva. Falta que la agencia cargue la ficha completa del viajero para poder subir documentacion individual.</div>${detailRows([['Telefono', t.phone], ['Email', t.email], ['Agencia', t.agencies?.commercial_name], ['Reserva', t.reservations?.reservation_code], ['Salida', t.reservations?.departures?.departure_code], ['Estado reserva', t.reservations?.status]])}</section>`;
+    box.innerHTML = `<section class="panel"><div class="toolbar"><h3>${esc(fullName(t))}</h3><button class="ghost" data-close-traveller>Cerrar ficha</button></div><div class="notice">Este cliente viene del titular de la reserva. Crea la ficha para poder editar datos y subir documentacion individual.</div>${detailRows([['Telefono', t.phone], ['Email', t.email], ['Agencia', t.agencies?.commercial_name], ['Reserva', t.reservations?.reservation_code], ['Salida', t.reservations?.departures?.departure_code], ['Estado reserva', t.reservations?.status]])}<div class="actions"><button data-create-lead-traveller="${t.reservation_id}">Crear ficha viajero</button></div></section>`;
     box.querySelector('[data-close-traveller]')?.addEventListener('click', () => { box.innerHTML = ''; });
+    bindAdminTravellerButtons(box);
     return;
   }
   const data = await api(`/api/admin/travellers/${id}`);
