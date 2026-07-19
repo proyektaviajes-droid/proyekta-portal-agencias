@@ -65,6 +65,17 @@ function json(res, status, data) {
   res.end(body);
 }
 
+function downloadJson(res, filename, data) {
+  const body = JSON.stringify(data, null, 2);
+  res.writeHead(200, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-disposition': `attachment; filename="${filename}"`,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff'
+  });
+  res.end(body);
+}
+
 function csv(res, filename, rows) {
   const content = toCsv(rows);
   res.writeHead(200, {
@@ -833,6 +844,45 @@ async function adminApi(req, res, url) {
     return json(res, 200, { reservation: updated, instructions: buildPaymentInstructions({ ...current, ...updated }) });
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/admin/travellers') {
+    const travellers = await supa('travellers', { query: { select: '*,agencies(commercial_name,agency_code),reservations(reservation_code,status,departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at))', order: 'created_at.desc' } });
+    const docs = await optionalSupa('documents', { query: { select: 'id,traveller_id', document_type: 'eq.viajero_documento' } }, []);
+    const counts = docs.reduce((acc, d) => { if (d.traveller_id) acc[d.traveller_id] = (acc[d.traveller_id] || 0) + 1; return acc; }, {});
+    return json(res, 200, { travellers: travellers.map(t => ({ ...t, documents_count: counts[t.id] || 0 })) });
+  }
+
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/admin\/travellers\/[^/]+$/)) {
+    const id = url.pathname.split('/')[4];
+    const traveller = (await supa('travellers', { query: { id: `eq.${id}`, select: '*,agencies(commercial_name,agency_code),reservations(reservation_code,status,departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at))', limit: '1' } }))[0];
+    if (!traveller) return json(res, 404, { error: 'Viajero no encontrado' });
+    const documents = await optionalSupa('documents', { query: { traveller_id: `eq.${id}`, document_type: 'eq.viajero_documento', order: 'created_at.desc' } }, []);
+    return json(res, 200, { traveller, documents });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/travellers\/[^/]+\/documents$/)) {
+    const travellerId = url.pathname.split('/')[4];
+    const input = await bodyJson(req);
+    const traveller = (await supa('travellers', { query: { id: `eq.${travellerId}`, limit: '1' } }))[0];
+    if (!traveller) return json(res, 404, { error: 'Viajero no encontrado' });
+    const parsed = parseUpload(input);
+    const filename = safeFilename(input.filename || input.name || `documento-viajero.${extensionForMime(parsed.mimeType)}`);
+    const storagePath = `travellers/${travellerId}/${Date.now()}-${filename}`;
+    await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
+    const file = (await supa('documents', { method: 'POST', body: [{ agency_id: traveller.agency_id || null, reservation_id: traveller.reservation_id || null, traveller_id: travellerId, document_type: 'viajero_documento', title: filename, storage_path: storagePath, visibility: 'admin', uploaded_by_type: 'admin', uploaded_by_id: session.userId || null }] }))[0];
+    await audit(session, 'traveller_document_uploaded', 'documents', file.id, { travellerId, storagePath });
+    return json(res, 201, { file });
+  }
+
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/admin\/travellers\/[^/]+\/documents\/[^/]+$/)) {
+    const parts = url.pathname.split('/');
+    const travellerId = parts[4];
+    const fileId = parts[6];
+    const file = (await supa('documents', { query: { id: `eq.${fileId}`, traveller_id: `eq.${travellerId}`, document_type: 'eq.viajero_documento', limit: '1' } }))[0];
+    if (!file) return json(res, 404, { error: 'Documento no encontrado' });
+    const loaded = await downloadAccountingFile(file.storage_path);
+    return binary(res, file.title, loaded.mimeType, loaded.buffer);
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/payments') {
     return json(res, 200, { payments: await supa('payments', { query: { select: '*,reservations(reservation_code),agencies(commercial_name,agency_code)', order: 'created_at.desc' } }) });
   }
@@ -947,6 +997,17 @@ async function adminApi(req, res, url) {
       if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
       throw error;
     }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/backup/full') {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const tableNames = ['agencies','agency_users','departures','departure_inventory','reservations','travellers','payments','incidents','documents','leads','lead_history','notifications','reservation_status_history','audit_logs'];
+    const tables = {};
+    for (const name of tableNames) {
+      tables[name] = await optionalSupa(name, { query: { select: '*' } }, []);
+    }
+    await audit(session, 'backup_json_full', 'backup', null, { tables: tableNames });
+    return downloadJson(res, `proyekta_backup_completo_${stamp}.json`, { exported_at: new Date().toISOString(), app: 'PROYEKTA VIAJES portal agencias', version: 1, tables });
   }
 
   if (req.method === 'GET' && url.pathname.startsWith('/api/admin/export/')) {

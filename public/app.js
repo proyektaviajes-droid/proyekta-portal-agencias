@@ -250,6 +250,35 @@ async function adminView(view) {
     ]))}`;
     bindAdminReservationButtons(target);
   }
+  if (view === 'adminTravellers') {
+    const { travellers } = await api('/api/admin/travellers');
+    state.adminTravellers = travellers;
+    target.innerHTML = html`
+      <div class="toolbar"><h2>Clientes / Viajeros</h2><button id="refreshTravellers">Actualizar</button></div>
+      <div class="notice">Listado general de personas que viajan. Sirve para no perder datos aunque vengan de agencias, reservas o salidas distintas.</div>
+      <div class="toolbar"><input id="travellerSearch" placeholder="Buscar nombre, DNI, email, telefono, agencia o salida..."></div>
+      <div id="travellerDetail"></div>
+      <div id="travellersTable">${travellersTable(travellers)}</div>`;
+    document.querySelector('#refreshTravellers').onclick = () => adminView('adminTravellers');
+    document.querySelector('#travellerSearch').oninput = e => {
+      const q = e.target.value.toLowerCase().trim();
+      const filtered = !q ? travellers : travellers.filter(t => JSON.stringify(t).toLowerCase().includes(q));
+      document.querySelector('#travellersTable').innerHTML = travellersTable(filtered);
+      bindAdminTravellerButtons(target);
+    };
+    bindAdminTravellerButtons(target);
+  }
+  if (view === 'adminBackups') {
+    target.innerHTML = html`
+      <h2>Copias de seguridad</h2>
+      <div class="notice">Descarga una copia completa en JSON para conservarla fuera del sistema. Es el formato pensado para migrar a otro PC o reconstruir la base de datos.</div>
+      <div class="grid two">
+        <section class="panel"><h3>Copia completa</h3><p>Incluye agencias, salidas, reservas, viajeros, pagos, incidencias, documentos y movimientos principales.</p><a class="button-link" href="/api/admin/backup/full" target="_blank">Descargar copia JSON</a></section>
+        <section class="panel"><h3>CSV para Excel</h3><p>Exportaciones separadas para revisar o enviar a gestoria.</p><div class="actions">${exportCard('Viajeros', 'travellers')}${exportCard('Reservas', 'reservations')}</div></section>
+      </div>
+      <section class="panel"><h3>Restaurar copia</h3><p class="muted">La restauracion automatica queda protegida: antes de sobrescribir datos se revisara el archivo. De momento usa la copia JSON como respaldo valido y portable.</p><input type="file" id="backupCheck" accept="application/json"><div id="backupCheckResult"></div></section>`;
+    document.querySelector('#backupCheck')?.addEventListener('change', previewBackupFile);
+  }
   if (view === 'adminPayments') {
     const { payments } = await api('/api/admin/payments');
     target.innerHTML = html`<h2>Pagos</h2>${table(['Reserva','Agencia','Importe','MÃ©todo','Estado','Referencia','Acciones'], payments.map(p => [
@@ -379,9 +408,14 @@ function bindAdminReservationButtons(target) {
     const action = btn.dataset.resAction;
     if (action === 'cancel' && !confirm('Cancelar esta reserva y liberar el bloqueo?')) return;
     if (action === 'confirm' && !confirm('Confirmo que el pago minimo esta verificado y la reserva queda confirmada.')) return;
-    const data = await api(`/api/admin/reservations/${btn.dataset.id}`, { method: 'PATCH', body: { action } });
-    if (action === 'block') showPaymentInstructions(data.instructions);
-    await refreshOpenReservation(btn.dataset.id);
+    try {
+      const data = await api(`/api/admin/reservations/${btn.dataset.id}`, { method: 'PATCH', body: { action } });
+      if (action === 'block') showPaymentInstructions(data.instructions);
+      await adminView('adminReservations');
+      await openAdminReservation(btn.dataset.id);
+    } catch (err) {
+      alert('No se pudo actualizar la reserva: ' + err.message);
+    }
   });
   target.querySelectorAll('[data-delete-reservation]').forEach(btn => btn.onclick = async () => {
     const code = btn.dataset.code || 'esta reserva';
@@ -474,7 +508,7 @@ function detailRows(rows) {
 }
 
 function fullName(t) {
-  return [t.first_name, t.last_name1, t.last_name2].filter(Boolean).join(' ') || t.full_name || '';
+  return [t.first_name, t.last_name_1 || t.last_name1, t.last_name_2 || t.last_name2].filter(Boolean).join(' ') || t.full_name || '';
 }
 
 function requestActions(request) {
@@ -504,16 +538,26 @@ function bindAdminRequestButtons(target) {
   target.querySelectorAll('[data-lead-contact]').forEach(btn => btn.onclick = () => markAgencyLeadContacted(btn.dataset.leadContact));
   target.querySelectorAll('[data-lead-convert]').forEach(btn => btn.onclick = () => convertAgencyLead(btn.dataset.leadConvert));
   target.querySelectorAll('[data-lead-reject]').forEach(btn => btn.onclick = () => rejectAgencyLead(btn.dataset.leadReject));
+  target.querySelectorAll('[data-view-agencies]').forEach(btn => btn.onclick = () => { document.querySelector('[data-view=\"adminAgencies\"]')?.click(); });
 }
 
+
 function leadActions(lead) {
-  return `<div class="actions">
-    <button data-lead-open="${lead.id}">Abrir ficha</button>
-    <button class="ghost" data-lead-copy="${lead.id}">Copiar respuesta</button>
-    <button class="ghost" data-lead-contact="${lead.id}">Marcar contactada</button>
-    <button class="ghost" data-lead-convert="${lead.id}">Aceptar / crear agencia</button>
-    <button class="ghost danger" data-lead-reject="${lead.id}">Rechazar</button>
-  </div>`;
+  const status = String(lead.status || '');
+  const buttons = [`<button data-lead-open="${lead.id}">Abrir ficha</button>`];
+  if (status === 'convertida') {
+    buttons.push(`<button class="ghost" data-view-agencies>Ver en Agencias</button>`);
+    return `<div class="actions">${buttons.join('')}</div>`;
+  }
+  if (status === 'rechazada') {
+    buttons.push(`<button class="ghost" data-lead-copy="${lead.id}">Copiar respuesta</button>`);
+    return `<div class="actions">${buttons.join('')}</div>`;
+  }
+  buttons.push(`<button class="ghost" data-lead-copy="${lead.id}">Copiar respuesta</button>`);
+  buttons.push(`<button class="ghost" data-lead-contact="${lead.id}">Marcar contactada</button>`);
+  buttons.push(`<button class="ghost" data-lead-convert="${lead.id}">Aceptar / crear agencia</button>`);
+  buttons.push(`<button class="ghost danger" data-lead-reject="${lead.id}">Rechazar</button>`);
+  return `<div class="actions">${buttons.join('')}</div>`;
 }
 
 function renderRequestDetail(r) {
@@ -1191,6 +1235,74 @@ function accountingDocActions(doc, files = []) {
     buttons.push(`<button data-accounting-paid="${doc.id}">${doc.direction === 'gasto' ? 'Marcar pagado' : 'Marcar cobrado'}</button>`);
   }
   return `<div class="actions">${buttons.length ? buttons.join('') : 'OK'}</div>`;
+}
+
+
+function travellersTable(rows) {
+  return table(['Nombre','DNI','Telefono','Email','Agencia','Reserva','Salida','Habitacion','Documentos','Acciones'], rows.map(t => [
+    fullName(t), t.document_number || t.identity_document || '', t.phone || '', t.email || '', t.agencies?.commercial_name || '', t.reservations?.reservation_code || '', t.reservations?.departures?.departure_code || '', t.room_type || '', t.documents_count || 0,
+    `<div class="actions"><button data-open-traveller="${t.id}">Abrir ficha</button><button class="ghost" data-upload-traveller-doc="${t.id}">Subir documento</button></div>`
+  ]));
+}
+
+function bindAdminTravellerButtons(target) {
+  target.querySelectorAll('[data-open-traveller]').forEach(btn => btn.onclick = () => openAdminTraveller(btn.dataset.openTraveller));
+  target.querySelectorAll('[data-upload-traveller-doc]').forEach(btn => btn.onclick = () => uploadTravellerDocument(btn.dataset.uploadTravellerDoc));
+}
+
+async function openAdminTraveller(id) {
+  const box = document.querySelector('#travellerDetail');
+  if (!box) return;
+  const data = await api(`/api/admin/travellers/${id}`);
+  const t = data.traveller;
+  box.innerHTML = `<section class="panel"><div class="toolbar"><h3>${esc(fullName(t))}</h3><button class="ghost" data-close-traveller>Cerrar ficha</button></div>
+    <div class="grid two"><div class="card"><h3>Datos personales</h3>${detailRows([
+      ['DNI/documento', t.document_number || t.identity_document], ['Telefono', t.phone], ['Email', t.email], ['Alergias', t.food_allergies], ['Movilidad', t.mobility_needs], ['Observaciones', t.observations]
+    ])}</div><div class="card"><h3>Viaje</h3>${detailRows([
+      ['Agencia', t.agencies?.commercial_name], ['Reserva', t.reservations?.reservation_code], ['Salida', t.reservations?.departures?.departure_code], ['Habitacion', t.room_type], ['Punto recogida', t.pickup_point], ['Consentimiento foto', t.photo_consent === true ? 'Si' : t.photo_consent === false ? 'No' : 'Pendiente']
+    ])}</div></div>
+    <h3>Documentacion</h3>${travellerDocumentsTable(data.documents || [])}
+    <div class="actions"><button data-upload-traveller-doc="${t.id}">Subir documento</button></div>
+  </section>`;
+  box.querySelector('[data-close-traveller]')?.addEventListener('click', () => { box.innerHTML = ''; });
+  bindAdminTravellerButtons(box);
+}
+
+function travellerDocumentsTable(files) {
+  return files.length ? table(['Documento','Tipo','Fecha','Acciones'], files.map(f => [f.title || f.filename || 'Documento', f.document_type || '', formatDateTime(f.created_at), `<a class="button-link" href="/api/admin/travellers/${f.traveller_id}/documents/${f.id}" target="_blank">Abrir</a>`])) : '<p class="muted">Aun no hay documentos subidos.</p>';
+}
+
+async function uploadTravellerDocument(travellerId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/pdf,image/jpeg,image/png,image/webp';
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) return alert('Archivo demasiado grande. Maximo 10 MB.');
+    const data = await readFileAsDataUrl(file);
+    await api(`/api/admin/travellers/${travellerId}/documents`, { method: 'POST', body: { filename: file.name, mimeType: file.type, data } });
+    alert('Documento guardado en la ficha del viajero.');
+    await openAdminTraveller(travellerId);
+  };
+  input.click();
+}
+
+function previewBackupFile(e) {
+  const file = e.target.files?.[0];
+  const box = document.querySelector('#backupCheckResult');
+  if (!file || !box) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      const keys = Object.keys(data.tables || data || {});
+      box.innerHTML = `<p class="notice">Copia legible. Tablas detectadas: ${keys.map(esc).join(', ') || 'sin tablas'}.</p>`;
+    } catch {
+      box.innerHTML = '<p class="danger">El archivo no parece una copia JSON valida.</p>';
+    }
+  };
+  reader.readAsText(file);
 }
 
 function reservationForm(departures) {
