@@ -831,9 +831,6 @@ async function adminApi(req, res, url) {
     const patch = reservationPatchForAction(current, action, input);
     for (const key of ['status', 'required_payment', 'paid_amount', 'block_expires_at']) if (input[key] !== undefined) patch[key] = input[key];
 
-    if (patch.status === 'confirmada' && Number(patch.paid_amount ?? current.paid_amount ?? 0) < Number(patch.required_payment ?? current.required_payment ?? 0)) {
-      return json(res, 400, { error: 'Antes de confirmar, verifica que el pago minimo requerido ya esta recibido.' });
-    }
 
     const updated = (await supa('reservations', { method: 'PATCH', query: { id: `eq.${id}` }, body: patch }))[0];
     if (patch.status && current?.status !== patch.status) {
@@ -845,10 +842,29 @@ async function adminApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/admin/travellers') {
-    const travellers = await supa('travellers', { query: { select: '*,agencies(commercial_name,agency_code),reservations(reservation_code,status,departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at))', order: 'created_at.desc' } });
-    const docs = await optionalSupa('documents', { query: { select: 'id,traveller_id', document_type: 'eq.viajero_documento' } }, []);
+    const [travellers, reservations, docs] = await Promise.all([
+      optionalSupa('travellers', { query: { select: '*,agencies(commercial_name,agency_code),reservations(reservation_code,status,departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at))', order: 'created_at.desc' } }, []),
+      optionalSupa('reservations', { query: { deleted_at: 'is.null', select: 'id,reservation_code,status,lead_traveller_name,lead_traveller_phone,lead_traveller_email,agency_id,departure_id,created_at,agencies(commercial_name,agency_code),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } }, []),
+      optionalSupa('documents', { query: { select: 'id,traveller_id', document_type: 'eq.viajero_documento' } }, [])
+    ]);
     const counts = docs.reduce((acc, d) => { if (d.traveller_id) acc[d.traveller_id] = (acc[d.traveller_id] || 0) + 1; return acc; }, {});
-    return json(res, 200, { travellers: travellers.map(t => ({ ...t, documents_count: counts[t.id] || 0 })) });
+    const realReservationIds = new Set(travellers.map(t => t.reservation_id).filter(Boolean));
+    const real = travellers.map(t => ({ ...t, documents_count: counts[t.id] || 0 }));
+    const leads = reservations
+      .filter(r => r.lead_traveller_name && !realReservationIds.has(r.id))
+      .map(r => ({
+        id: `reservation:${r.id}`,
+        first_name: r.lead_traveller_name,
+        phone: r.lead_traveller_phone,
+        email: r.lead_traveller_email,
+        agency_id: r.agency_id,
+        reservation_id: r.id,
+        documents_count: 0,
+        agencies: r.agencies,
+        reservations: { id: r.id, reservation_code: r.reservation_code, status: r.status, departures: r.departures },
+        source: 'titular_reserva'
+      }));
+    return json(res, 200, { travellers: [...real, ...leads] });
   }
 
   if (req.method === 'GET' && url.pathname.match(/^\/api\/admin\/travellers\/[^/]+$/)) {

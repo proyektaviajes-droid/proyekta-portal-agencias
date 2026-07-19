@@ -389,11 +389,21 @@ function showPaymentInstructions(instructions) {
   }
 }
 
+function paymentStatus(r) {
+  const paid = Number(r.paid_amount || 0);
+  const required = Number(r.required_payment || 0);
+  const total = Number(r.total_amount || 0);
+  if (total > 0 && paid >= total) return 'pagado completo';
+  if (required > 0 && paid >= required) return 'se????al pagada';
+  if (paid > 0) return 'pago parcial';
+  return 'pendiente pago';
+}
+
 function reservationActions(r) {
   const buttons = [`<button data-open-reservation="${r.id}">Abrir</button>`];
   if (r.status !== 'confirmada' && r.status !== 'cancelada') {
-    buttons.push(`<button data-res-action="block" data-id="${r.id}">Bloquear</button>`);
-    buttons.push(`<button data-res-action="confirm" data-id="${r.id}">Confirmar</button>`);
+    buttons.push(`<button data-res-action="block" data-id="${r.id}">Bloquear plazas</button>`);
+    buttons.push(`<button data-res-action="confirm" data-id="${r.id}">Confirmar reserva</button>`);
   }
   buttons.push(`<button class="ghost" data-pay-instructions="${r.id}">Instrucciones pago</button>`);
   buttons.push(`<button class="ghost" data-register-admin-payment="${r.id}">Registrar pago</button>`);
@@ -407,7 +417,7 @@ function bindAdminReservationButtons(target) {
   target.querySelectorAll('[data-res-action]').forEach(btn => btn.onclick = async () => {
     const action = btn.dataset.resAction;
     if (action === 'cancel' && !confirm('Cancelar esta reserva y liberar el bloqueo?')) return;
-    if (action === 'confirm' && !confirm('Confirmo que el pago minimo esta verificado y la reserva queda confirmada.')) return;
+    if (action === 'confirm' && !confirm('Confirmar la reserva operativamente? Si no hay pago suficiente, quedara como pago pendiente.')) return;
     try {
       const data = await api(`/api/admin/reservations/${btn.dataset.id}`, { method: 'PATCH', body: { action } });
       if (action === 'block') showPaymentInstructions(data.instructions);
@@ -478,7 +488,8 @@ function reservationDetail(data) {
         ${metric('Total reserva', money(r.total_amount))}
         ${metric('Pagado', money(r.paid_amount))}
         ${metric('Pendiente', money(pending))}
-        ${metric('Pago minimo', money(r.required_payment || 0))}
+        ${metric('Se????al requerida', money(r.required_payment || 0))}
+        ${metric('Estado pago', paymentStatus(r))}
       </div>
       <div class="grid two">
         <div class="card"><h3>Datos de reserva</h3>${detailRows([
@@ -1239,10 +1250,13 @@ function accountingDocActions(doc, files = []) {
 
 
 function travellersTable(rows) {
-  return table(['Nombre','DNI','Telefono','Email','Agencia','Reserva','Salida','Habitacion','Documentos','Acciones'], rows.map(t => [
-    fullName(t), t.document_number || t.identity_document || '', t.phone || '', t.email || '', t.agencies?.commercial_name || '', t.reservations?.reservation_code || '', t.reservations?.departures?.departure_code || '', t.room_type || '', t.documents_count || 0,
-    `<div class="actions"><button data-open-traveller="${t.id}">Abrir ficha</button><button class="ghost" data-upload-traveller-doc="${t.id}">Subir documento</button></div>`
-  ]));
+  return table(['Nombre','DNI','Telefono','Email','Agencia','Reserva','Salida','Habitacion','Documentos','Acciones'], rows.map(t => {
+    const isLead = String(t.id || '').startsWith('reservation:');
+    const actions = isLead
+      ? `<div class="actions"><button data-open-traveller="${t.id}">Abrir titular</button><span class="status">Pendiente ficha viajero</span></div>`
+      : `<div class="actions"><button data-open-traveller="${t.id}">Abrir ficha</button><button class="ghost" data-upload-traveller-doc="${t.id}">Subir documento</button></div>`;
+    return [fullName(t), t.document_number || t.identity_document || '', t.phone || '', t.email || '', t.agencies?.commercial_name || '', t.reservations?.reservation_code || '', t.reservations?.departures?.departure_code || '', t.room_type || '', t.documents_count || 0, actions];
+  }));
 }
 
 function bindAdminTravellerButtons(target) {
@@ -1253,6 +1267,13 @@ function bindAdminTravellerButtons(target) {
 async function openAdminTraveller(id) {
   const box = document.querySelector('#travellerDetail');
   if (!box) return;
+  if (String(id || '').startsWith('reservation:')) {
+    const t = (state.adminTravellers || []).find(x => String(x.id) === String(id));
+    if (!t) return;
+    box.innerHTML = `<section class="panel"><div class="toolbar"><h3>${esc(fullName(t))}</h3><button class="ghost" data-close-traveller>Cerrar ficha</button></div><div class="notice">Este cliente viene del titular de la reserva. Falta que la agencia cargue la ficha completa del viajero para poder subir documentacion individual.</div>${detailRows([['Telefono', t.phone], ['Email', t.email], ['Agencia', t.agencies?.commercial_name], ['Reserva', t.reservations?.reservation_code], ['Salida', t.reservations?.departures?.departure_code], ['Estado reserva', t.reservations?.status]])}</section>`;
+    box.querySelector('[data-close-traveller]')?.addEventListener('click', () => { box.innerHTML = ''; });
+    return;
+  }
   const data = await api(`/api/admin/travellers/${id}`);
   const t = data.traveller;
   box.innerHTML = `<section class="panel"><div class="toolbar"><h3>${esc(fullName(t))}</h3><button class="ghost" data-close-traveller>Cerrar ficha</button></div>
