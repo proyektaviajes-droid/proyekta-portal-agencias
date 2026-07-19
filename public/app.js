@@ -244,8 +244,8 @@ async function adminView(view) {
   }
   if (view === 'adminReservations') {
     const { reservations } = await api('/api/admin/reservations');
-    target.innerHTML = html`<h2>Reservas</h2><div class="notice">Cada reserva se puede abrir para ver datos completos, viajeros, pagos, historial y acciones de gestiÃ³n.</div><div id="reservationDetail"></div>${table(['CÃ³digo','Agencia','Email pago','Email agencia','Salida','Viajeros','Total','MÃ­nimo','Pagado','Bloqueo','Estado','Acciones'], reservations.map(r => [
-      r.reservation_code, r.agencies?.commercial_name, r.lead_traveller_email || r.agencies?.main_email || '', r.agencies?.main_email || '', r.departures?.departure_code, r.requested_places, money(r.total_amount), money(r.required_payment || 0), money(r.paid_amount), formatDateTime(r.block_expires_at), badge(r.status),
+    target.innerHTML = html`<h2>Reservas</h2><div class="notice">Bloquear plazas = apartarlas temporalmente. Confirmar reserva = queda aceptada, aunque el pago siga pendiente.</div><div id="reservationDetail"></div>${table(['Codigo','Agencia','Email pago','Email agencia','Salida','Viajeros','Total','Senal','Pagado','Estado pago','Bloqueo','Estado reserva','Acciones'], reservations.map(r => [
+      r.reservation_code, r.agencies?.commercial_name, r.lead_traveller_email || r.agencies?.main_email || '', r.agencies?.main_email || '', r.departures?.departure_code, r.requested_places, money(r.total_amount), money(r.required_payment || 0), money(r.paid_amount), paymentStatus(r), formatDateTime(r.block_expires_at), badge(r.status),
       reservationActions(r)
     ]))}`;
     bindAdminReservationButtons(target);
@@ -394,7 +394,7 @@ function paymentStatus(r) {
   const required = Number(r.required_payment || 0);
   const total = Number(r.total_amount || 0);
   if (total > 0 && paid >= total) return 'pagado completo';
-  if (required > 0 && paid >= required) return 'se????al pagada';
+  if (required > 0 && paid >= required) return 'senal pagada';
   if (paid > 0) return 'pago parcial';
   return 'pendiente pago';
 }
@@ -488,7 +488,7 @@ function reservationDetail(data) {
         ${metric('Total reserva', money(r.total_amount))}
         ${metric('Pagado', money(r.paid_amount))}
         ${metric('Pendiente', money(pending))}
-        ${metric('Se????al requerida', money(r.required_payment || 0))}
+        ${metric('Senal requerida', money(r.required_payment || 0))}
         ${metric('Estado pago', paymentStatus(r))}
       </div>
       <div class="grid two">
