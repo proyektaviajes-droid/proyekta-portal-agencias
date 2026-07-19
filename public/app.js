@@ -174,6 +174,7 @@ async function adminView(view) {
   if (view === 'adminRequests') {
     const { requests, leads } = await api('/api/admin/agency-requests');
     state.adminRequests = requests;
+    state.adminLeads = leads;
     target.innerHTML = html`
       <div class="toolbar"><h2>Solicitudes de agencias</h2><button id="refreshRequests">Actualizar</button></div>
       <div class="notice">Aqui aparecen las agencias que han pedido colaborar. Desde aqui puedes abrir la ficha, contactar, crear la agencia o descartar la solicitud.</div>
@@ -182,8 +183,8 @@ async function adminView(view) {
         esc(r.name), esc(r.contact), esc(r.email), esc(r.phone), esc(r.zone), esc(r.next_follow_up), esc(r.notes || ''), requestActions(r)
       ]))}
       <h3>Historial comercial recibido</h3>
-      ${table(['Codigo','Nombre','Email','Telefono','Zona','Estado','Proximo paso','Notas'], leads.map(l => [
-        esc(l.lead_code), esc(l.name), esc(l.email), esc(l.phone), esc(l.zone), badge(l.status), esc(l.next_action), esc(l.notes || '')
+      ${table(['Codigo','Nombre','Email','Telefono','Zona','Estado','Proximo paso','Notas','Acciones'], leads.map(l => [
+        esc(l.lead_code), esc(l.name), esc(l.email), esc(l.phone), esc(l.zone), badge(l.status), esc(l.next_action), esc(l.notes || ''), leadActions(l)
       ]))}`;
     document.querySelector('#refreshRequests').onclick = () => adminView('adminRequests');
     bindAdminRequestButtons(target);
@@ -495,6 +496,24 @@ function bindAdminRequestButtons(target) {
   target.querySelectorAll('[data-request-contact]').forEach(btn => btn.onclick = () => markAgencyRequestContacted(btn.dataset.requestContact));
   target.querySelectorAll('[data-request-convert]').forEach(btn => btn.onclick = () => convertAgencyRequest(btn.dataset.requestConvert));
   target.querySelectorAll('[data-request-discard]').forEach(btn => btn.onclick = () => discardAgencyRequest(btn.dataset.requestDiscard));
+  target.querySelectorAll('[data-lead-open]').forEach(btn => btn.onclick = () => {
+    const lead = (state.adminLeads || []).find(l => String(l.id) === String(btn.dataset.leadOpen));
+    if (lead) document.querySelector('#requestDetail').innerHTML = renderLeadDetail(lead);
+  });
+  target.querySelectorAll('[data-lead-copy]').forEach(btn => btn.onclick = () => copyAgencyLeadReply(btn.dataset.leadCopy));
+  target.querySelectorAll('[data-lead-contact]').forEach(btn => btn.onclick = () => markAgencyLeadContacted(btn.dataset.leadContact));
+  target.querySelectorAll('[data-lead-convert]').forEach(btn => btn.onclick = () => convertAgencyLead(btn.dataset.leadConvert));
+  target.querySelectorAll('[data-lead-reject]').forEach(btn => btn.onclick = () => rejectAgencyLead(btn.dataset.leadReject));
+}
+
+function leadActions(lead) {
+  return `<div class="actions">
+    <button data-lead-open="${lead.id}">Abrir ficha</button>
+    <button class="ghost" data-lead-copy="${lead.id}">Copiar respuesta</button>
+    <button class="ghost" data-lead-contact="${lead.id}">Marcar contactada</button>
+    <button class="ghost" data-lead-convert="${lead.id}">Aceptar / crear agencia</button>
+    <button class="ghost danger" data-lead-reject="${lead.id}">Rechazar</button>
+  </div>`;
 }
 
 function renderRequestDetail(r) {
@@ -504,6 +523,16 @@ function renderRequestDetail(r) {
       ['Contacto', r.contact], ['Email', r.email], ['Telefono', r.phone], ['Zona', r.zone], ['Proximo seguimiento', r.next_follow_up], ['Notas', r.notes]
     ])}
     <div class="actions">${requestActions(r)}</div>
+  </section>`;
+}
+
+function renderLeadDetail(l) {
+  return `<section class="panel">
+    <div class="toolbar"><h3>${esc(l.name)}</h3><span>${badge(l.status || 'pendiente')}</span></div>
+    ${detailRows([
+      ['Codigo', l.lead_code], ['Email', l.email], ['Telefono', l.phone], ['Zona', l.zone], ['Proximo paso', l.next_action], ['Notas', l.notes]
+    ])}
+    <div class="actions">${leadActions(l)}</div>
   </section>`;
 }
 
@@ -559,6 +588,56 @@ async function convertAgencyRequest(id) {
   if (!confirm(`Crear agencia para ${r.name}? Quedara lista para generar invitacion.`)) return;
   const result = await api(`/api/admin/agency-requests/${id}/convert`, { method: 'POST' });
   alert(`Agencia creada: ${result.agency.agency_code}. Ahora puedes generar el acceso desde Agencias.`);
+  adminView('adminAgencies');
+}
+
+function agencyLeadById(id) {
+  return (state.adminLeads || []).find(l => String(l.id) === String(id));
+}
+
+function leadAgencyName(lead) {
+  return String(lead.name || '').split(' - ')[0].trim() || lead.name || 'Agencia';
+}
+
+function leadContactName(lead) {
+  const parts = String(lead.name || '').split(' - ');
+  return (parts[1] || '').trim() || '';
+}
+
+async function copyAgencyLeadReply(id) {
+  const lead = agencyLeadById(id);
+  if (!lead) return alert('Solicitud no encontrada');
+  const text = agencyRequestReplyText({ contact: leadContactName(lead), email: lead.email });
+  if (navigator.clipboard) {
+    await navigator.clipboard.writeText(text);
+    alert('Respuesta copiada. Pegala en el correo o WhatsApp de la agencia.');
+  } else {
+    prompt('Copia este mensaje:', text);
+  }
+}
+
+async function markAgencyLeadContacted(id) {
+  const nextFollowUp = prompt('Proximo seguimiento (AAAA-MM-DD):', new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10));
+  if (nextFollowUp === null) return;
+  const note = prompt('Nota de seguimiento:', 'Contactada y enviada documentacion comercial.');
+  if (note === null) return;
+  await api(`/api/admin/leads/${id}`, { method: 'PATCH', body: { action: 'contacted', nextFollowUp, note } });
+  adminView('adminRequests');
+}
+
+async function rejectAgencyLead(id) {
+  const reason = prompt('Motivo del rechazo:', 'No interesa / duplicada / sin respuesta.');
+  if (reason === null) return;
+  await api(`/api/admin/leads/${id}`, { method: 'PATCH', body: { action: 'rejected', note: reason } });
+  adminView('adminRequests');
+}
+
+async function convertAgencyLead(id) {
+  const lead = agencyLeadById(id);
+  if (!lead) return alert('Solicitud no encontrada');
+  if (!confirm(`Aceptar y crear agencia para ${leadAgencyName(lead)}?`)) return;
+  const result = await api(`/api/admin/leads/${id}/convert`, { method: 'POST' });
+  alert(`Agencia creada: ${result.agency.agency_code}. Ahora puedes enviarle el acceso desde Agencias.`);
   adminView('adminAgencies');
 }
 function agencyActions(agency) {

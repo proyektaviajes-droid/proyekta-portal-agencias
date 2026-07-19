@@ -484,6 +484,74 @@ async function adminApi(req, res, url) {
     return json(res, 201, { agency });
   }
 
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/leads\/[^/]+$/)) {
+    const leadId = url.pathname.split('/')[4];
+    const input = await bodyJson(req);
+    const action = String(input.action || '');
+    const now = new Date().toISOString();
+    const lead = (await supa('leads', { query: { id: `eq.${leadId}`, limit: '1' } }))[0];
+    if (!lead) return json(res, 404, { error: 'Solicitud no encontrada' });
+
+    const note = String(input.note || '').trim();
+    const notes = [lead.notes, note ? `${now.slice(0, 10)} - ${note}` : null].filter(Boolean).join('\n\n');
+    const patch = { notes };
+
+    if (action === 'contacted') {
+      patch.status = 'contactada';
+      patch.first_attention_due_at = input.nextFollowUp ? new Date(input.nextFollowUp).toISOString() : lead.first_attention_due_at;
+      patch.next_action = `Seguimiento programado para ${input.nextFollowUp || 'fecha pendiente'}.`;
+    } else if (action === 'rejected') {
+      patch.status = 'rechazada';
+      patch.next_action = 'Solicitud rechazada / descartada por PROYEKTA.';
+    } else {
+      return json(res, 400, { error: 'Accion de lead no valida' });
+    }
+
+    const updated = (await supa('leads', { method: 'PATCH', query: { id: `eq.${leadId}` }, body: patch }))[0];
+    await supa('lead_history', { method: 'POST', body: [{ lead_id: leadId, old_status: lead.status || null, new_status: patch.status, notes: note || patch.next_action, actor_type: 'admin' }] }).catch(() => {});
+    await audit(session, `lead_${action}`, 'leads', leadId, patch);
+    return json(res, 200, { lead: updated });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/leads\/[^/]+\/convert$/)) {
+    const leadId = url.pathname.split('/')[4];
+    const lead = (await supa('leads', { query: { id: `eq.${leadId}`, limit: '1' } }))[0];
+    if (!lead) return json(res, 404, { error: 'Solicitud no encontrada' });
+
+    const duplicate = (await supa('agencies', { query: { main_email: `eq.${lead.email}`, deleted_at: 'is.null', limit: '1' } }))[0];
+    if (duplicate) return json(res, 409, { error: 'Ya existe una agencia con ese email' });
+
+    const parts = String(lead.name || '').split(' - ');
+    const commercialName = (parts[0] || lead.name || '').trim();
+    const representativeName = (parts[1] || '').trim() || null;
+    const code = await nextAgencyCode();
+    const agency = (await supa('agencies', { method: 'POST', body: [{
+      agency_code: code,
+      commercial_name: required(commercialName, 'Nombre comercial'),
+      legal_name: commercialName || null,
+      tax_id: null,
+      main_email: required(lead.email, 'Correo principal'),
+      main_phone: lead.phone || null,
+      representative_name: representativeName,
+      default_commission_rate: 0.10,
+      contract_declared_signed: false,
+      contract_status: 'pendiente',
+      access_status: 'invitacion_pendiente',
+      internal_notes: [
+        `Creada desde historial comercial ${new Date().toISOString().slice(0, 10)}.`,
+        lead.zone ? `Zona: ${lead.zone}` : null,
+        lead.notes || null
+      ].filter(Boolean).join('\n\n')
+    }] }))[0];
+
+    await supa('agency_users', { method: 'POST', body: [{ agency_id: agency.id, name: representativeName || commercialName, email: lead.email, role: 'principal' }] });
+    const updated = (await supa('leads', { method: 'PATCH', query: { id: `eq.${leadId}` }, body: { status: 'convertida', next_action: `Convertida en agencia ${agency.agency_code}.`, notes: [lead.notes, `Convertida en agencia ${agency.agency_code}.`].filter(Boolean).join('\n\n') } }))[0];
+    await supa('lead_history', { method: 'POST', body: [{ lead_id: leadId, old_status: lead.status || null, new_status: 'convertida', notes: `Agencia creada: ${agency.agency_code}`, actor_type: 'admin' }] }).catch(() => {});
+    await audit(session, 'lead_converted_to_agency', 'leads', leadId, { agency_id: agency.id, agency_code: agency.agency_code });
+    await audit(session, 'agency_created_from_lead', 'agencies', agency.id, { lead_id: leadId });
+    return json(res, 201, { agency, lead: updated });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/agencies') {
     return json(res, 200, { agencies: await supa('agencies', { query: { select: '*', order: 'created_at.desc', deleted_at: 'is.null' } }) });
   }
