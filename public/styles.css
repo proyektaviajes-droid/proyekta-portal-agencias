@@ -111,3 +111,12 @@ th { background: #f8faf8; color: #33413d; font-size: 13px; }
   .metric { color: #000; font-size: 20px; }
   a { color: #000; text-decoration: none; }
 }
+
+.public-agency { display: grid; gap: 18px; max-width: 980px; margin: 5vh auto; }
+.public-hero { padding: 30px; }
+.public-hero h1 { font-size: clamp(28px, 4vw, 44px); line-height: 1.08; max-width: 760px; }
+.public-hero .muted { max-width: 760px; font-size: 17px; }
+.eyebrow { margin: 0 0 8px; text-transform: uppercase; letter-spacing: .12em; color: var(--brand); font-weight: 800; font-size: 12px; }
+.check { display: flex; grid-template-columns: auto 1fr; align-items: start; gap: 10px; font-weight: 500; }
+.check input { width: auto; margin-top: 4px; }
+button:disabled { opacity: .65; cursor: wait; }

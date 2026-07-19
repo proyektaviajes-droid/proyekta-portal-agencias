@@ -9,7 +9,7 @@ const api = async (url, options = {}) => {
     body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'No se ha podido completar la acción');
+  if (!res.ok) throw new Error(data.error || 'No se ha podido completar la acciÃ³n');
   return data;
 };
 
@@ -20,10 +20,24 @@ const money = v => new Intl.NumberFormat('es-ES', { style: 'currency', currency:
 async function init() {
   state.session = (await api('/api/session')).session;
   logoutBtn.classList.toggle('hidden', !state.session);
-  if (location.hash.startsWith('#/crear-contrasena')) return renderSetPassword();
-  if (!state.session) return renderLogin();
-  if (state.session.type === 'admin') return renderAdmin();
-  return renderAgency();
+  const path = location.pathname.replace(/\/+$/, '') || '/';
+
+  if (path === '/crear-contrasena') return renderSetPassword();
+  if (path === '/admin') {
+    if (!state.session) return renderAdminLoginOnly();
+    if (state.session.type === 'admin') return renderAdmin();
+    await api('/api/auth/logout', { method: 'POST' });
+    state.session = null;
+    return renderAdminLoginOnly();
+  }
+  if (path === '/acceso') {
+    if (!state.session) return renderAgencyLoginOnly();
+    if (state.session.type === 'agency') return renderAgency();
+    await api('/api/auth/logout', { method: 'POST' });
+    state.session = null;
+    return renderAgencyLoginOnly();
+  }
+  return renderPublicAgencyRequest();
 }
 
 function useTemplate(id) {
@@ -34,6 +48,77 @@ function renderLogin() {
   useTemplate('#loginTpl');
   document.querySelector('#agencyLogin').addEventListener('submit', submitAgencyLogin);
   document.querySelector('#adminLogin').addEventListener('submit', submitAdminLogin);
+}
+
+function renderAgencyLoginOnly() {
+  useTemplate('#loginTpl');
+  document.querySelector('#adminLogin')?.closest('.panel')?.remove();
+  document.querySelector('.panel.full')?.remove();
+  document.querySelector('#agencyLogin').addEventListener('submit', submitAgencyLogin);
+}
+
+function renderAdminLoginOnly() {
+  useTemplate('#loginTpl');
+  document.querySelector('#agencyLogin')?.closest('.panel')?.remove();
+  document.querySelector('.panel.full')?.remove();
+  document.querySelector('#adminLogin').addEventListener('submit', submitAdminLogin);
+}
+
+function renderPublicAgencyRequest() {
+  app.innerHTML = html`
+    <section class="public-agency">
+      <section class="panel public-hero">
+        <p class="eyebrow">Agencias colaboradoras</p>
+        <h1>Colabora con PROYEKTA VIAJES en Ribeira Sacra</h1>
+        <p class="muted">Deja tus datos para recibir la documentacion comercial. Despues podras descargar el dossier y el contrato de colaboracion. El acceso operativo al portal solo se entrega cuando PROYEKTA valida el contrato.</p>
+        <div class="actions">
+          <a class="ghost button-light" href="/acceso">Ya tengo acceso como agencia</a>
+        </div>
+      </section>
+      <form class="panel form-grid" id="publicAgencyLead">
+        <h2 class="full">Solicitar informacion y documentacion</h2>
+        ${publicInput('agencyName','Nombre de la agencia')}
+        ${publicInput('contactName','Persona de contacto')}
+        ${publicInput('email','Email','email')}
+        ${publicInput('phone','Telefono')}
+        ${publicInput('location','Ciudad / provincia')}
+        <label class="full">Mensaje<textarea name="message" placeholder="Zona de trabajo, tipo de clientes o cualquier detalle util"></textarea></label>
+        <label class="full check"><input name="privacy" type="checkbox" required> Acepto que PROYEKTA VIAJES use estos datos para gestionar la solicitud de colaboracion.</label>
+        <button class="full">Enviar solicitud</button>
+      </form>
+      <section class="panel hidden" id="agencyLeadDownloads">
+        <h2>Solicitud recibida</h2>
+        <p class="muted">Ahora puedes descargar la documentacion. Si te interesa colaborar, firma el contrato y envianoslo para revision.</p>
+        <div class="actions">
+          <a class="button-link" href="/dossiers/PROYEKTA_Dossier_Colaboracion_Agencias_2027_REVISADO.pdf" download>Descargar dossier</a>
+          <a class="button-link" href="/contracts/Contrato_colaboracion_agencias_Proyekta_Viajes_CORREGIDO.pdf" target="_blank">Descargar contrato</a>
+          <a class="ghost button-light" href="mailto:jon@proyektaviajes.com?subject=Contrato agencia colaboradora PROYEKTA">Enviar contrato por email</a>
+        </div>
+        <p class="muted">Cuando PROYEKTA reciba y valide el contrato, te enviaremos el codigo de agencia y el enlace para crear contrasena.</p>
+      </section>
+    </section>`;
+  document.querySelector('#publicAgencyLead').addEventListener('submit', submitPublicAgencyLead);
+}
+
+function publicInput(name, label, type = 'text') {
+  return `<label>${label}<input name="${name}" type="${type}" required></label>`;
+}
+
+async function submitPublicAgencyLead(e) {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const button = form.querySelector('button');
+  const data = Object.fromEntries(new FormData(form));
+  try {
+    if (button) { button.disabled = true; button.textContent = 'Enviando solicitud...'; }
+    await api('/api/public/agency-requests', { method: 'POST', body: data });
+    localStorage.setItem('proyekta_last_agency_request', JSON.stringify({ ...data, createdAt: new Date().toISOString() }));
+    form.classList.add('hidden');
+    document.querySelector('#agencyLeadDownloads').classList.remove('hidden');
+  } catch (err) {
+    alert('No se pudo enviar la solicitud al programa: ' + err.message);
+    if (button) { button.disabled = false; button.textContent = 'Enviar solicitud'; }
+  }
 }
 
 async function submitAgencyLogin(e) {
@@ -56,14 +141,14 @@ async function submitAdminLogin(e) {
 
 function renderSetPassword() {
   useTemplate('#setPasswordTpl');
-  const token = new URLSearchParams(location.hash.split('?')[1] || '').get('token');
+  const token = new URLSearchParams(location.search.slice(1) || '').get('token');
   document.querySelector('#setPasswordForm').addEventListener('submit', async e => {
     e.preventDefault();
     try {
       await api('/api/invitations/set-password', { method: 'POST', body: { token, password: new FormData(e.currentTarget).get('password') } });
-      alert('Contraseña creada. Ya puedes iniciar sesión.');
-      location.hash = '';
-      renderLogin();
+      alert('ContraseÃ±a creada. Ya puedes iniciar sesiÃ³n.');
+      history.replaceState(null, '', '/acceso');
+      renderAgencyLoginOnly();
     } catch (err) { alert(err.message); }
   });
 }
@@ -86,12 +171,26 @@ function renderAdmin() {
 
 async function adminView(view) {
   const target = document.querySelector('#view');
+  if (view === 'adminRequests') {
+    const { requests, leads } = await api('/api/admin/agency-requests');
+    target.innerHTML = html`
+      <div class="toolbar"><h2>Solicitudes de agencias</h2><button id="refreshRequests">Actualizar</button></div>
+      <div class="notice">Aqui aparecen las agencias que han dejado sus datos en la entrada publica. Todavia no tienen acceso al portal. Cuando recibas y valides el contrato, las creas como agencia activa y les generas la invitacion.</div>
+      ${table(['Agencia','Contacto','Email','Telefono','Zona','Seguimiento','Notas'], requests.map(r => [
+        esc(r.name), esc(r.contact), esc(r.email), esc(r.phone), esc(r.zone), esc(r.next_follow_up), esc(r.notes || '')
+      ]))}
+      <h3>Historial comercial recibido</h3>
+      ${table(['Codigo','Nombre','Email','Telefono','Zona','Estado','Proximo paso','Notas'], leads.map(l => [
+        esc(l.lead_code), esc(l.name), esc(l.email), esc(l.phone), esc(l.zone), badge(l.status), esc(l.next_action), esc(l.notes || '')
+      ]))}`;
+    document.querySelector('#refreshRequests').onclick = () => adminView('adminRequests');
+  }
   if (view === 'adminAgencies') {
     const { agencies } = await api('/api/admin/agencies');
     target.innerHTML = html`
       <div class="toolbar"><h2>Agencias</h2><button id="newAgency">Nueva agencia</button></div>
       <div id="agencyForm" class="panel hidden">${agencyForm()}</div>
-      ${table(['Código','Agencia','Email','Contrato','Acceso','Acciones'], agencies.map(a => [
+      ${table(['CÃ³digo','Agencia','Email','Contrato','Acceso','Acciones'], agencies.map(a => [
         a.agency_code, a.commercial_name, a.main_email, badge(a.contract_status), badge(a.access_status),
         agencyActions(a)
       ]))}
@@ -104,7 +203,7 @@ async function adminView(view) {
     });
     target.querySelectorAll('[data-access]').forEach(btn => btn.onclick = async () => {
       const label = btn.dataset.access === 'bloqueada' ? 'bloquear' : btn.dataset.access === 'desactivada' ? 'desactivar' : 'reactivar';
-      if (!confirm(`¿Seguro que quieres ${label} esta agencia?`)) return;
+      if (!confirm(`Â¿Seguro que quieres ${label} esta agencia?`)) return;
       await api(`/api/admin/agencies/${btn.dataset.id}/access`, { method: 'PATCH', body: { accessStatus: btn.dataset.access } });
       adminView('adminAgencies');
     });
@@ -120,7 +219,7 @@ async function adminView(view) {
     });
     target.querySelectorAll('[data-delete-agency]').forEach(btn => btn.onclick = async () => {
       const name = btn.dataset.name || 'esta agencia';
-      const ok = confirm(`¿Borrar ${name}? Desaparecerá de la lista y no podrá acceder al portal.`);
+      const ok = confirm(`Â¿Borrar ${name}? DesaparecerÃ¡ de la lista y no podrÃ¡ acceder al portal.`);
       if (!ok) return;
       await api(`/api/admin/agencies/${btn.dataset.deleteAgency}`, { method: 'DELETE' });
       adminView('adminAgencies');
@@ -131,8 +230,8 @@ async function adminView(view) {
     target.innerHTML = html`
       <div class="toolbar"><h2>Salidas</h2><button id="newDeparture">Nueva salida</button></div>
       <div id="departureForm" class="panel hidden">${departureForm()}</div>
-      ${table(['Código','Viaje','Origen','Fechas','PVP','Depósito','Estado','Visible'], departures.map(d => [
-        d.departure_code, d.trip_name, d.origin_code, `${d.starts_at} - ${d.ends_at}`, money(d.price_per_traveller), money(d.deposit_amount), badge(d.status), d.visible_to_agencies ? 'Sí' : 'No'
+      ${table(['CÃ³digo','Viaje','Origen','Fechas','PVP','DepÃ³sito','Estado','Visible'], departures.map(d => [
+        d.departure_code, d.trip_name, d.origin_code, `${d.starts_at} - ${d.ends_at}`, money(d.price_per_traveller), money(d.deposit_amount), badge(d.status), d.visible_to_agencies ? 'SÃ­' : 'No'
       ]))}
     `;
     document.querySelector('#newDeparture').onclick = () => document.querySelector('#departureForm').classList.toggle('hidden');
@@ -140,39 +239,21 @@ async function adminView(view) {
   }
   if (view === 'adminReservations') {
     const { reservations } = await api('/api/admin/reservations');
-    target.innerHTML = html`<h2>Reservas</h2><div class="notice">Flujo recomendado: bloquear plaza, copiar instrucciones de pago, verificar transferencia y confirmar reserva.</div>${table(['Código','Agencia','Email pago','Email agencia','Salida','Viajeros','Total','Mínimo','Pagado','Bloqueo','Estado','Acciones'], reservations.map(r => [
+    target.innerHTML = html`<h2>Reservas</h2><div class="notice">Cada reserva se puede abrir para ver datos completos, viajeros, pagos, historial y acciones de gestiÃ³n.</div><div id="reservationDetail"></div>${table(['CÃ³digo','Agencia','Email pago','Email agencia','Salida','Viajeros','Total','MÃ­nimo','Pagado','Bloqueo','Estado','Acciones'], reservations.map(r => [
       r.reservation_code, r.agencies?.commercial_name, r.lead_traveller_email || r.agencies?.main_email || '', r.agencies?.main_email || '', r.departures?.departure_code, r.requested_places, money(r.total_amount), money(r.required_payment || 0), money(r.paid_amount), formatDateTime(r.block_expires_at), badge(r.status),
       reservationActions(r)
     ]))}`;
-    target.querySelectorAll('[data-res-action]').forEach(btn => btn.onclick = async () => {
-      const action = btn.dataset.resAction;
-      if (action === 'cancel' && !confirm('¿Cancelar esta reserva y liberar el bloqueo?')) return;
-      if (action === 'confirm' && !confirm('Confirmo que el pago mínimo está verificado y la reserva queda confirmada.')) return;
-      const data = await api(`/api/admin/reservations/${btn.dataset.id}`, { method: 'PATCH', body: { action } });
-      if (action === 'block') showPaymentInstructions(data.instructions);
-      adminView('adminReservations');
-    });
-    target.querySelectorAll('[data-delete-reservation]').forEach(btn => btn.onclick = async () => {
-      const code = btn.dataset.code || 'esta reserva';
-      const ok = confirm(`Borrar ${code}? Desaparecera del panel. Si es una anulacion real, usa primero Anular.`);
-      if (!ok) return;
-      await api(`/api/admin/reservations/${btn.dataset.deleteReservation}`, { method: 'DELETE' });
-      adminView('adminReservations');
-    });
-    target.querySelectorAll('[data-pay-instructions]').forEach(btn => btn.onclick = async () => {
-      const data = await api(`/api/admin/reservations/${btn.dataset.payInstructions}/payment-instructions`, { method: 'POST' });
-      showPaymentInstructions(data.instructions);
-    });
+    bindAdminReservationButtons(target);
   }
   if (view === 'adminPayments') {
     const { payments } = await api('/api/admin/payments');
-    target.innerHTML = html`<h2>Pagos</h2>${table(['Reserva','Agencia','Importe','Método','Estado','Referencia','Acciones'], payments.map(p => [
+    target.innerHTML = html`<h2>Pagos</h2>${table(['Reserva','Agencia','Importe','MÃ©todo','Estado','Referencia','Acciones'], payments.map(p => [
       p.reservations?.reservation_code, p.agencies?.commercial_name, money(p.amount), p.method, badge(p.status), p.external_reference || '',
       p.status === 'verificado' ? 'Verificado' : `<button data-verify="${p.id}">Verificar</button>`
     ]))}`;
     target.querySelectorAll('[data-verify]').forEach(btn => btn.onclick = async () => {
       const data = await api(`/api/admin/payments/${btn.dataset.verify}/verify`, { method: 'PATCH' });
-      alert(data.readyToConfirm ? 'Pago verificado. La reserva ya tiene el mínimo para confirmar.' : 'Pago verificado y sumado a la reserva.');
+      alert(data.readyToConfirm ? 'Pago verificado. La reserva ya tiene el mÃ­nimo para confirmar.' : 'Pago verificado y sumado a la reserva.');
       adminView('adminPayments');
     });
   }
@@ -207,7 +288,7 @@ async function adminView(view) {
       const data = await api('/api/admin/control/summary');
       const totals = controlTotals(data.balances);
       target.innerHTML = html`
-        <div class="toolbar"><h2>Administración y control económico</h2><button id="newEntity">Nueva entidad</button></div>
+        <div class="toolbar"><h2>AdministraciÃ³n y control econÃ³mico</h2><button id="newEntity">Nueva entidad</button></div>
         <div class="grid">
           ${metric('Pendiente de cobrar', money(totals.toCollect))}
           ${metric('Pendiente de pagar', money(totals.toPay))}
@@ -215,8 +296,8 @@ async function adminView(view) {
         </div>
         <div id="entityForm" class="panel hidden">${controlEntityForm(data.categories)}</div>
         <h3>Entidades recientes</h3>
-        ${table(['Nombre','Email','Teléfono','Estado'], data.entities.map(e => [e.display_name, e.main_email || '', e.main_phone || '', badge(e.status)]))}
-        <h3>Vencimientos próximos</h3>
+        ${table(['Nombre','Email','TelÃ©fono','Estado'], data.entities.map(e => [e.display_name, e.main_email || '', e.main_phone || '', badge(e.status)]))}
+        <h3>Vencimientos prÃ³ximos</h3>
         ${table(['Entidad','Tipo','Fecha','Importe','Pagado','Estado'], data.dueItems.map(d => [d.entities?.display_name || '', d.direction, d.due_date, money(d.amount), money(d.paid_amount), badge(d.status)]))}
         <h3>Tareas abiertas</h3>
         ${table(['Tarea','Prioridad','Vence','Estado'], data.tasks.map(t => [t.title, t.priority, formatDateTime(t.due_at), badge(t.status)]))}
@@ -225,22 +306,22 @@ async function adminView(view) {
       document.querySelector('#createControlEntity')?.addEventListener('submit', createControlEntity);
     } catch (err) {
       target.innerHTML = html`
-        <h2>Administración y control económico</h2>
-        <div class="notice">Falta ejecutar la migración <strong>db/004_proyekta_control_core.sql</strong> en Supabase. Después aparecerán entidades, categorías, vencimientos y tesorería.</div>
+        <h2>AdministraciÃ³n y control econÃ³mico</h2>
+        <div class="notice">Falta ejecutar la migraciÃ³n <strong>db/004_proyekta_control_core.sql</strong> en Supabase. DespuÃ©s aparecerÃ¡n entidades, categorÃ­as, vencimientos y tesorerÃ­a.</div>
         <p class="muted">${esc(err.message)}</p>
       `;
     }
   }
   if (view === 'adminIncidents') {
     const { incidents } = await api('/api/admin/incidents');
-    target.innerHTML = html`<h2>Incidencias</h2>${table(['Código','Agencia','Categoría','Prioridad','Estado','Descripción'], incidents.map(i => [
+    target.innerHTML = html`<h2>Incidencias</h2>${table(['CÃ³digo','Agencia','CategorÃ­a','Prioridad','Estado','DescripciÃ³n'], incidents.map(i => [
       i.incident_code, i.agencies?.commercial_name, i.category, i.priority, badge(i.status), i.description
     ]))}`;
   }
   if (view === 'adminExports') {
     target.innerHTML = html`
       <h2>Exportar datos</h2>
-      <div class="notice">Descarga copias CSV cuando quieras. Guárdalas en una carpeta privada; pueden contener datos personales.</div>
+      <div class="notice">Descarga copias CSV cuando quieras. GuÃ¡rdalas en una carpeta privada; pueden contener datos personales.</div>
       <div class="grid two">
         ${exportCard('Agencias', 'agencies')}
         ${exportCard('Salidas', 'departures')}
@@ -255,11 +336,11 @@ async function adminView(view) {
 
 function showInvitation(data) {
   const text = `Asunto: ${data.message.subject}\n\n${data.message.body}`;
-  const ok = confirm('Invitación generada. Pulsa Aceptar para copiar el mensaje completo.');
+  const ok = confirm('InvitaciÃ³n generada. Pulsa Aceptar para copiar el mensaje completo.');
   if (ok && navigator.clipboard) {
-    navigator.clipboard.writeText(text).then(() => alert('Mensaje copiado. Pégalo en Gmail y envíalo a la agencia.'));
+    navigator.clipboard.writeText(text).then(() => alert('Mensaje copiado. PÃ©galo en Gmail y envÃ­alo a la agencia.'));
   } else {
-    prompt('Copia este mensaje y envíalo a la agencia:', text);
+    prompt('Copia este mensaje y envÃ­alo a la agencia:', text);
   }
 }
 
@@ -275,19 +356,123 @@ function showPaymentInstructions(instructions) {
 }
 
 function reservationActions(r) {
-  const buttons = [];
+  const buttons = [`<button data-open-reservation="${r.id}">Abrir</button>`];
   if (r.status !== 'confirmada' && r.status !== 'cancelada') {
     buttons.push(`<button data-res-action="block" data-id="${r.id}">Bloquear</button>`);
     buttons.push(`<button data-res-action="confirm" data-id="${r.id}">Confirmar</button>`);
   }
-  buttons.push(`<button class="ghost" data-pay-instructions="${r.id}">Pago</button>`);
+  buttons.push(`<button class="ghost" data-pay-instructions="${r.id}">Instrucciones pago</button>`);
+  buttons.push(`<button class="ghost" data-register-admin-payment="${r.id}">Registrar pago</button>`);
   if (r.status !== 'cancelada') buttons.push(`<button class="ghost" data-res-action="cancel" data-id="${r.id}">Anular</button>`);
   buttons.push(`<button class="ghost danger" data-delete-reservation="${r.id}" data-code="${esc(r.reservation_code)}">Borrar</button>`);
   return `<div class="actions">${buttons.join('')}</div>`;
 }
 
+function bindAdminReservationButtons(target) {
+  target.querySelectorAll('[data-open-reservation]').forEach(btn => btn.onclick = () => openAdminReservation(btn.dataset.openReservation));
+  target.querySelectorAll('[data-res-action]').forEach(btn => btn.onclick = async () => {
+    const action = btn.dataset.resAction;
+    if (action === 'cancel' && !confirm('Cancelar esta reserva y liberar el bloqueo?')) return;
+    if (action === 'confirm' && !confirm('Confirmo que el pago minimo esta verificado y la reserva queda confirmada.')) return;
+    const data = await api(`/api/admin/reservations/${btn.dataset.id}`, { method: 'PATCH', body: { action } });
+    if (action === 'block') showPaymentInstructions(data.instructions);
+    await refreshOpenReservation(btn.dataset.id);
+  });
+  target.querySelectorAll('[data-delete-reservation]').forEach(btn => btn.onclick = async () => {
+    const code = btn.dataset.code || 'esta reserva';
+    const ok = confirm(`Borrar ${code}? Desaparecera del panel. Si es una anulacion real, usa primero Anular.`);
+    if (!ok) return;
+    await api(`/api/admin/reservations/${btn.dataset.deleteReservation}`, { method: 'DELETE' });
+    adminView('adminReservations');
+  });
+  target.querySelectorAll('[data-pay-instructions]').forEach(btn => btn.onclick = async () => {
+    const data = await api(`/api/admin/reservations/${btn.dataset.payInstructions}/payment-instructions`, { method: 'POST' });
+    showPaymentInstructions(data.instructions);
+  });
+  target.querySelectorAll('[data-register-admin-payment]').forEach(btn => btn.onclick = async () => {
+    const current = await api(`/api/admin/reservations/${btn.dataset.registerAdminPayment}`);
+    const r = current.reservation;
+    const amount = prompt('Importe pagado total acumulado para esta reserva:', r.paid_amount || 0);
+    if (amount === null) return;
+    await api(`/api/admin/reservations/${r.id}`, { method: 'PATCH', body: { paid_amount: Number(String(amount).replace(',', '.')) } });
+    await refreshOpenReservation(r.id);
+  });
+}
+
+async function openAdminReservation(id) {
+  const box = document.querySelector('#reservationDetail');
+  if (!box) return;
+  box.innerHTML = '<div class="panel">Cargando reserva...</div>';
+  try {
+    const data = await api(`/api/admin/reservations/${id}`);
+    box.innerHTML = reservationDetail(data);
+    bindAdminReservationButtons(box);
+    box.querySelector('[data-close-reservation]')?.addEventListener('click', () => { box.innerHTML = ''; });
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (err) {
+    box.innerHTML = `<div class="panel"><strong>Error al abrir reserva</strong><p class="danger">${esc(err.message)}</p></div>`;
+  }
+}
+
+async function refreshOpenReservation(id) {
+  const box = document.querySelector('#reservationDetail');
+  if (box && box.innerHTML.trim()) await openAdminReservation(id);
+  else adminView('adminReservations');
+}
+
+function reservationDetail(data) {
+  const r = data.reservation;
+  const travellers = data.travellers || [];
+  const payments = data.payments || [];
+  const history = data.history || [];
+  const incidents = data.incidents || [];
+  const pending = Math.max(0, Number(r.total_amount || 0) - Number(r.paid_amount || 0));
+  return html`
+    <section class="panel reservation-detail">
+      <div class="toolbar">
+        <div><h2>${esc(r.reservation_code)}</h2><p class="muted">${esc(r.agencies?.commercial_name || '')} · ${esc(r.departures?.departure_code || '')}</p></div>
+        <div class="actions">${reservationActions(r)}<button class="ghost" data-close-reservation>Cerrar ficha</button></div>
+      </div>
+      <div class="grid">
+        ${metric('Estado', r.status)}
+        ${metric('Viajeros', r.requested_places || travellers.length || 0)}
+        ${metric('Total reserva', money(r.total_amount))}
+        ${metric('Pagado', money(r.paid_amount))}
+        ${metric('Pendiente', money(pending))}
+        ${metric('Pago minimo', money(r.required_payment || 0))}
+      </div>
+      <div class="grid two">
+        <div class="card"><h3>Datos de reserva</h3>${detailRows([
+          ['Agencia', r.agencies?.commercial_name], ['Codigo agencia', r.agencies?.agency_code], ['Email agencia', r.agencies?.main_email],
+          ['Titular', r.lead_traveller_name], ['Telefono titular', r.lead_traveller_phone], ['Email pago', r.lead_traveller_email],
+          ['Habitaciones dobles', r.double_rooms], ['Habitaciones individuales', r.single_rooms], ['Habitaciones triples', r.triple_rooms],
+          ['Bloqueo hasta', formatDateTime(r.block_expires_at)], ['Notas', r.notes]
+        ])}</div>
+        <div class="card"><h3>Salida</h3>${detailRows([
+          ['Viaje', r.departures?.trip_name], ['Codigo salida', r.departures?.departure_code], ['Origen', r.departures?.origin_name || r.departures?.origin_code],
+          ['Fechas', formatDateRange(r.departures?.starts_at, r.departures?.ends_at)], ['PVP viajero', money(r.departures?.price_per_traveller)], ['Deposito viajero', money(r.departures?.deposit_amount)]
+        ])}</div>
+      </div>
+      <div class="grid two">
+        <div class="card"><h3>Viajeros</h3>${travellers.length ? table(['Nombre','Telefono','Email','DNI','Habitacion'], travellers.map(t => [fullName(t), t.phone || '', t.email || '', t.identity_document || '', t.room_type || ''])) : '<p class="muted">Aun no hay viajeros registrados.</p>'}</div>
+        <div class="card"><h3>Pagos</h3>${payments.length ? table(['Fecha','Pagador','Importe','Metodo','Estado','Referencia'], payments.map(p => [formatDateTime(p.created_at), p.payer_name || '', money(p.amount), p.method || '', badge(p.status), p.external_reference || ''])) : '<p class="muted">Aun no hay pagos comunicados.</p>'}</div>
+      </div>
+      <div class="grid two">
+        <div class="card"><h3>Historial</h3>${history.length ? table(['Fecha','Antes','Despues','Motivo'], history.map(h => [formatDateTime(h.created_at), h.old_status || '', h.new_status || '', h.reason || ''])) : '<p class="muted">Sin historial todavia.</p>'}</div>
+        <div class="card"><h3>Incidencias</h3>${incidents.length ? table(['Fecha','Categoria','Prioridad','Estado','Descripcion'], incidents.map(i => [formatDateTime(i.created_at), i.category || '', i.priority || '', badge(i.status), i.description || ''])) : '<p class="muted">Sin incidencias.</p>'}</div>
+      </div>
+    </section>`;
+}
+
+function detailRows(rows) {
+  return `<table><tbody>${rows.map(([k,v]) => `<tr><th>${esc(k)}</th><td>${esc(v || 'Pendiente')}</td></tr>`).join('')}</tbody></table>`;
+}
+
+function fullName(t) {
+  return [t.first_name, t.last_name1, t.last_name2].filter(Boolean).join(' ') || t.full_name || '';
+}
 function agencyActions(agency) {
-  const buttons = [`<button data-invite="${agency.id}">Generar invitación</button>`];
+  const buttons = [`<button data-invite="${agency.id}">Generar invitaciÃ³n</button>`];
   if (agency.access_status === 'activa' || agency.access_status === 'invitacion_pendiente') {
     buttons.push(`<button class="ghost" data-access="bloqueada" data-id="${agency.id}">Bloquear</button>`);
     buttons.push(`<button class="ghost" data-access="desactivada" data-id="${agency.id}">Desactivar</button>`);
@@ -326,7 +511,7 @@ async function agencyView(view) {
         ${metric('Reservas', data.reservations.length)}
         ${metric('Pagos pendientes', data.payments.filter(p => p.status !== 'verificado').length)}
       </div>
-      <h3>Próximas salidas</h3>
+      <h3>PrÃ³ximas salidas</h3>
       ${departuresTable(data.departures)}
       <h3>Mis reservas</h3>
       ${reservationsTable(data.reservations)}
@@ -335,7 +520,7 @@ async function agencyView(view) {
   if (view === 'agencyNewReservation') {
     target.innerHTML = html`
       <h2>Nueva solicitud de reserva</h2>
-      <div class="notice">Esta solicitud no confirma plazas. La reserva quedará confirmada solo cuando PROYEKTA VIAJES lo comunique expresamente y se haya recibido el pago requerido.</div>
+      <div class="notice">Esta solicitud no confirma plazas. La reserva quedarÃ¡ confirmada solo cuando PROYEKTA VIAJES lo comunique expresamente y se haya recibido el pago requerido.</div>
       ${reservationForm(data.departures)}
     `;
     document.querySelector('#createReservation')?.addEventListener('submit', createReservation);
@@ -349,15 +534,24 @@ async function agencyView(view) {
     document.querySelector('#createPayment')?.addEventListener('submit', createPayment);
   }
   if (view === 'agencyIncidents') {
-    target.innerHTML = html`<h2>Nueva incidencia</h2>${incidentForm(data.reservations)}${table(['Código','Categoría','Prioridad','Estado','Descripción'], data.incidents.map(i => [i.incident_code, i.category, i.priority, badge(i.status), i.description]))}`;
+    target.innerHTML = html`<h2>Nueva incidencia</h2>${incidentForm(data.reservations)}${table(['CÃ³digo','CategorÃ­a','Prioridad','Estado','DescripciÃ³n'], data.incidents.map(i => [i.incident_code, i.category, i.priority, badge(i.status), i.description]))}`;
     document.querySelector('#createIncident')?.addEventListener('submit', createIncident);
   }
 }
 
 async function createAgency(e) {
   e.preventDefault();
-  await api('/api/admin/agencies', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
-  adminView('adminAgencies');
+  const form = e.currentTarget;
+  const btn = form.querySelector('button');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Creando agencia...'; }
+    await api('/api/admin/agencies', { method: 'POST', body: Object.fromEntries(new FormData(form)) });
+    alert('Agencia creada. Ahora genera la invitacion para que pueda crear contrasena.');
+    adminView('adminAgencies');
+  } catch (err) {
+    alert('No se pudo crear la agencia: ' + err.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Crear agencia'; }
+  }
 }
 
 async function createDeparture(e) {
@@ -426,7 +620,7 @@ async function createTraveller(e) {
 async function createPayment(e) {
   e.preventDefault();
   await api('/api/agency/payments', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
-  alert('Pago comunicado. PROYEKTA lo revisará y verificará.');
+  alert('Pago comunicado. PROYEKTA lo revisarÃ¡ y verificarÃ¡.');
   agencyView('agencyPayments');
 }
 
@@ -440,12 +634,12 @@ async function createIncident(e) {
 function agencyForm() {
   return `<form id="createAgency" class="form-grid">
     ${input('commercialName','Nombre comercial')}
-    ${input('legalName','Razón social')}
+    ${input('legalName','RazÃ³n social')}
     ${input('taxId','NIF/CIF')}
     ${input('mainEmail','Correo principal','email')}
-    ${input('mainPhone','Teléfono')}
+    ${input('mainPhone','TelÃ©fono')}
     ${input('representativeName','Representante')}
-    ${input('commissionRate','Comisión','number','0.10','0.01')}
+    ${input('commissionRate','ComisiÃ³n','number','0.10','0.01')}
     ${input('contractSignedAt','Fecha contrato','date')}
     <label><input name="contractSigned" type="checkbox"> Contrato firmado</label>
     <label class="full">Notas internas<textarea name="internalNotes"></textarea></label>
@@ -455,19 +649,19 @@ function agencyForm() {
 
 function departureForm() {
   return `<form id="createDeparture" class="form-grid">
-    ${input('departureCode','Código salida','','PV-2027-MAD-001')}
+    ${input('departureCode','CÃ³digo salida','','PV-2027-ORIGEN-001')}
     ${input('tripName','Viaje','','Ribeira Sacra Premium')}
-    ${input('originName','Origen','','Madrid')}
-    ${input('originCode','Código origen','','MAD')}
+    ${input('originName','Origen','','Madrid / Pais Vasco / nuevo origen')}
+    ${input('originCode','CÃ³digo origen','','MAD')}
     ${input('startsAt','Inicio','date')}
     ${input('endsAt','Fin','date')}
     ${input('pricePerTraveller','PVP por viajero','number','1149','1')}
-    ${input('depositAmount','Depósito','number','300','1')}
+    ${input('depositAmount','DepÃ³sito','number','300','1')}
     ${input('totalPlaces','Plazas','number','40','1')}
-    ${input('minimumParticipants','Mínimo participantes','number','25','1')}
+    ${input('minimumParticipants','MÃ­nimo participantes','number','25','1')}
     <label>Estado<select name="status"><option value="borrador">Borrador</option><option value="disponible">Disponible</option><option value="confirmada">Confirmada</option></select></label>
     <label><input name="visibleToAgencies" type="checkbox"> Visible para agencias</label>
-    <label class="full">Cancelación<textarea name="cancellationTerms"></textarea></label>
+    <label class="full">CancelaciÃ³n<textarea name="cancellationTerms"></textarea></label>
     <button class="full">Crear salida</button>
   </form>`;
 }
@@ -475,16 +669,16 @@ function departureForm() {
 function controlEntityForm(categories) {
   return `<form id="createControlEntity" class="form-grid">
     <label>Nombre visible<input name="displayName" required></label>
-    <label>Razón social<input name="legalName"></label>
+    <label>RazÃ³n social<input name="legalName"></label>
     <label>NIF/CIF<input name="taxId"></label>
     <label>Tipo<select name="entityKind"><option value="empresa">Empresa</option><option value="persona">Persona</option><option value="organismo">Organismo</option><option value="otro">Otro</option></select></label>
-    <label>Categoría<select name="categoryId"><option value="">Sin categoría inicial</option>${categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
+    <label>CategorÃ­a<select name="categoryId"><option value="">Sin categorÃ­a inicial</option>${categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
     <label>Email<input name="mainEmail" type="email"></label>
-    <label>Teléfono<input name="mainPhone"></label>
+    <label>TelÃ©fono<input name="mainPhone"></label>
     <label>Ciudad<input name="city"></label>
     <label>Provincia<input name="province"></label>
     <label>IBAN<input name="bankAccount"></label>
-    <label>Días de pago/cobro<input name="defaultPaymentTermsDays" type="number" value="0" step="1"></label>
+    <label>DÃ­as de pago/cobro<input name="defaultPaymentTermsDays" type="number" value="0" step="1"></label>
     <label>Estado<select name="status"><option value="activa">Activa</option><option value="potencial">Potencial</option><option value="bloqueada">Bloqueada</option><option value="inactiva">Inactiva</option></select></label>
     <label class="full">Notas<textarea name="notes"></textarea></label>
     <button class="full">Crear entidad</button>
@@ -812,7 +1006,7 @@ function accountingExportPanel() {
   return `<div class="panel">
     <h3>Exportar trimestre para gestoria</h3>
     <form class="form-grid compact" onsubmit="event.preventDefault(); window.open('/api/admin/accounting/export?year=' + this.year.value + '&quarter=' + this.quarter.value, '_blank')">
-      <label>Año<input name="year" type="number" value="${year}" min="2026" step="1"></label>
+      <label>AÃ±o<input name="year" type="number" value="${year}" min="2026" step="1"></label>
       <label>Trimestre<select name="quarter"><option value="1" ${quarter === 1 ? 'selected' : ''}>T1</option><option value="2" ${quarter === 2 ? 'selected' : ''}>T2</option><option value="3" ${quarter === 3 ? 'selected' : ''}>T3</option><option value="4" ${quarter === 4 ? 'selected' : ''}>T4</option></select></label>
       <button>Descargar CSV</button>
     </form>
@@ -833,16 +1027,16 @@ function accountingDocActions(doc, files = []) {
 
 function reservationForm(departures) {
   if (!departures.length) {
-    return `<div class="notice">Aún no hay fechas visibles para agencias. Entra como administrador y carga o publica las salidas de Madrid y País Vasco.</div>`;
+    return `<div class="notice">AÃºn no hay fechas visibles para agencias. Entra como administrador y carga o publica las salidas de Madrid y PaÃ­s Vasco.</div>`;
   }
   return `<form id="createReservation" class="panel form-grid">
     <label class="full">Fecha y lugar de salida<select name="departureId" required>${departures.map(d => `<option value="${d.id}">${esc(departureLabel(d))}</option>`).join('')}</select></label>
-    ${input('requestedPlaces','Número de viajeros','number','2','1')}
+    ${input('requestedPlaces','NÃºmero de viajeros','number','2','1')}
     ${input('doubleRooms','Habitaciones dobles','number','1','1')}
     ${input('singleRooms','Habitaciones individuales','number','0','1')}
     ${input('tripleRooms','Habitaciones triples','number','0','1')}
     ${input('leadTravellerName','Viajero principal')}
-    ${input('leadTravellerPhone','Teléfono principal')}
+    ${input('leadTravellerPhone','TelÃ©fono principal')}
     ${input('leadTravellerEmail','Email principal','email')}
     <label class="full">Necesidades conocidas<textarea name="basicNeeds"></textarea></label>
     <label class="full">Observaciones<textarea name="observations"></textarea></label>
@@ -856,10 +1050,10 @@ function travellerForm(reservations) {
     ${input('firstName','Nombre')}
     ${input('lastName1','Primer apellido')}
     ${input('lastName2','Segundo apellido')}
-    ${input('phone','Teléfono')}
+    ${input('phone','TelÃ©fono')}
     ${input('email','Email','email')}
     ${input('emergencyContactName','Contacto emergencia')}
-    ${input('emergencyContactPhone','Teléfono emergencia')}
+    ${input('emergencyContactPhone','TelÃ©fono emergencia')}
     <label>Alergias<textarea name="foodAllergies"></textarea></label>
     <label>Movilidad<textarea name="mobilityNeeds"></textarea></label>
     ${input('pickupPoint','Punto de recogida')}
@@ -881,15 +1075,15 @@ function paymentForm(reservations) {
 function incidentForm(reservations) {
   return `<form id="createIncident" class="panel form-grid">
     ${reservationSelect(reservations, false)}
-    <label>Categoría<select name="category"><option>Pago</option><option>Documentación</option><option>Alojamiento</option><option>Transporte</option><option>Alimentación</option><option>Movilidad</option><option>Cancelación</option><option>Otra</option></select></label>
+    <label>CategorÃ­a<select name="category"><option>Pago</option><option>DocumentaciÃ³n</option><option>Alojamiento</option><option>Transporte</option><option>AlimentaciÃ³n</option><option>Movilidad</option><option>CancelaciÃ³n</option><option>Otra</option></select></label>
     <label>Prioridad<select name="priority"><option value="normal">Normal</option><option value="baja">Baja</option><option value="alta">Alta</option><option value="urgente">Urgente</option></select></label>
-    <label class="full">Descripción<textarea name="description" required></textarea></label>
+    <label class="full">DescripciÃ³n<textarea name="description" required></textarea></label>
     <button class="full">Registrar incidencia</button>
   </form>`;
 }
 
 function reservationSelect(reservations, required = true) {
-  return `<label class="full">Reserva<select name="reservationId" ${required ? 'required' : ''}><option value="">Selecciona</option>${reservations.map(r => `<option value="${r.id}">${esc(r.reservation_code)} · ${esc(r.departures?.origin_code || '')} · ${esc(formatDateRange(r.departures?.starts_at, null))}</option>`).join('')}</select></label>`;
+  return `<label class="full">Reserva<select name="reservationId" ${required ? 'required' : ''}><option value="">Selecciona</option>${reservations.map(r => `<option value="${r.id}">${esc(r.reservation_code)} Â· ${esc(r.departures?.origin_code || '')} Â· ${esc(formatDateRange(r.departures?.starts_at, null))}</option>`).join('')}</select></label>`;
 }
 
 function input(name, label, type = 'text', value = '', step = '') {
@@ -931,19 +1125,19 @@ function formatDateRange(startsAt, endsAt) {
 }
 
 function departureLabel(d) {
-  return `${d.origin_name || d.origin_code} · ${formatDateRange(d.starts_at, d.ends_at)} · ${money(d.price_per_traveller)} · depósito ${money(d.deposit_amount)}`;
+  return `${d.origin_name || d.origin_code} Â· ${formatDateRange(d.starts_at, d.ends_at)} Â· ${money(d.price_per_traveller)} Â· depÃ³sito ${money(d.deposit_amount)}`;
 }
 
 function table(headers, rows) {
-  return `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${headers.length}" class="muted">Sin datos todavía.</td></tr>`}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${headers.length}" class="muted">Sin datos todavÃ­a.</td></tr>`}</tbody></table></div>`;
 }
 
 function departuresTable(rows) {
-  return table(['Código','Viaje','Salida','Fechas','PVP','Depósito','Estado'], rows.map(d => [d.departure_code, d.trip_name, d.origin_name || d.origin_code, formatDateRange(d.starts_at, d.ends_at), money(d.price_per_traveller), money(d.deposit_amount), badge(d.status)]));
+  return table(['CÃ³digo','Viaje','Salida','Fechas','PVP','DepÃ³sito','Estado'], rows.map(d => [d.departure_code, d.trip_name, d.origin_name || d.origin_code, formatDateRange(d.starts_at, d.ends_at), money(d.price_per_traveller), money(d.deposit_amount), badge(d.status)]));
 }
 
 function reservationsTable(rows) {
-  return table(['Código','Salida','Fechas','Viajeros','Total','Pagado','Estado'], rows.map(r => [r.reservation_code, r.departures?.origin_name || r.departures?.origin_code || '', formatDateRange(r.departures?.starts_at, r.departures?.ends_at), r.requested_places, money(r.total_amount), money(r.paid_amount), badge(r.status)]));
+  return table(['CÃ³digo','Salida','Fechas','Viajeros','Total','Pagado','Estado'], rows.map(r => [r.reservation_code, r.departures?.origin_name || r.departures?.origin_code || '', formatDateRange(r.departures?.starts_at, r.departures?.ends_at), r.requested_places, money(r.total_amount), money(r.paid_amount), badge(r.status)]));
 }
 
 logoutBtn.addEventListener('click', async () => {
@@ -952,7 +1146,11 @@ logoutBtn.addEventListener('click', async () => {
   init();
 });
 
-window.addEventListener('hashchange', init);
+window.addEventListener('popstate', init);
 init().catch(err => {
   app.innerHTML = `<div class="panel"><h1>Error</h1><p class="danger">${esc(err.message)}</p></div>`;
 });
+
+
+
+

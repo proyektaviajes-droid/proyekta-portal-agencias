@@ -10,10 +10,10 @@
     <header class="topbar">
       <div>
         <strong>PROYEKTA VIAJES</strong>
-        <span>Portal privado de agencias</span>
+        <span>Colaboracion para agencias de viajes</span>
       </div>
       <div class="actions">
-        <a class="ghost button-light" href="/contrato-agencias.html" target="_blank">Solicitar acceso</a>
+        <a class="ghost button-light" href="/acceso">Acceso agencias</a>
         <button id="logoutBtn" class="ghost hidden">Cerrar sesion</button>
       </div>
     </header>
@@ -60,6 +60,7 @@
     <template id="adminTpl">
       <section class="layout">
         <nav class="side">
+          <button data-view="adminRequests">Solicitudes</button>
           <button data-view="adminAgencies">Agencias</button>
           <button data-view="adminDepartures">Salidas</button>
           <button data-view="adminReservations">Reservas</button>
@@ -94,3 +95,4 @@
     <script src="/app.js" type="module"></script>
   </body>
 </html>
+

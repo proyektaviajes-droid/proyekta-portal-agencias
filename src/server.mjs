@@ -193,7 +193,9 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/auth/agency-login') {
-      const { agencyCode, password } = await bodyJson(req);
+      const input = await bodyJson(req);
+      const agencyCode = String(input.agencyCode || '').trim();
+      const password = String(input.password || '').trim();
       const agencies = await supa('agencies', { query: { agency_code: `eq.${agencyCode}`, access_status: 'eq.activa', deleted_at: 'is.null', limit: '1' } });
       const agency = agencies[0];
       if (!agency) return json(res, 401, { error: 'Credenciales incorrectas' });
@@ -215,13 +217,19 @@ async function api(req, res, url) {
       return json(res, 200, { session: session ? publicSession(session) : null });
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/public/agency-requests') {
+      return createPublicAgencyRequest(req, res);
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/invitations/set-password') {
-      const { token, password } = await bodyJson(req);
-      if (!token || String(password).length < 10) return json(res, 400, { error: 'Token o contraseña no válidos' });
+      const input = await bodyJson(req);
+      const token = String(input.token || '').trim();
+      const password = String(input.password || '').trim();
+      if (!token || password.length < 10) return json(res, 400, { error: 'Token o contraseÃ±a no vÃ¡lidos' });
       const tokenHash = sha256(token);
       const users = await supa('agency_users', { query: { invitation_token_hash: `eq.${tokenHash}`, is_active: 'eq.true', limit: '1' } });
       const user = users[0];
-      if (!user || new Date(user.invitation_expires_at) < new Date()) return json(res, 400, { error: 'Invitación caducada o no válida' });
+      if (!user || new Date(user.invitation_expires_at) < new Date()) return json(res, 400, { error: 'InvitaciÃ³n caducada o no vÃ¡lida' });
       const password_hash = await hashPassword(password);
       await supa('agency_users', { method: 'PATCH', query: { id: `eq.${user.id}` }, body: { password_hash, password_set_at: new Date().toISOString(), invitation_token_hash: null, invitation_expires_at: null } });
       await supa('agencies', { method: 'PATCH', query: { id: `eq.${user.agency_id}` }, body: { access_status: 'activa' } });
@@ -236,6 +244,68 @@ async function api(req, res, url) {
     console.error(error);
     return json(res, 500, { error: 'Error interno', detail: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
+}
+
+
+async function createPublicAgencyRequest(req, res) {
+  const input = await bodyJson(req);
+  const agencyName = required(input.agencyName, 'Nombre de agencia');
+  const contactName = required(input.contactName, 'Persona de contacto');
+  const email = required(input.email, 'Email');
+  const phone = String(input.phone || '').trim() || null;
+  const zone = String(input.location || '').trim() || null;
+  const message = String(input.message || '').trim() || null;
+  const now = new Date().toISOString();
+  const leadCode = `AGREQ-${Date.now().toString(36).toUpperCase()}`;
+
+  const lead = (await supa('leads', {
+    method: 'POST',
+    body: [{
+      lead_code: leadCode,
+      name: `${agencyName} - ${contactName}`,
+      phone,
+      email,
+      zone,
+      product_interest: 'agencia_colaboradora',
+      first_attention_due_at: new Date(Date.now() + 2 * 86400000).toISOString(),
+      status: 'pendiente_atencion',
+      notes: message,
+      next_action: 'Revisar solicitud, enviar seguimiento comercial y esperar contrato firmado.'
+    }]
+  }))[0];
+
+  await supa('lead_history', {
+    method: 'POST',
+    body: [{
+      lead_id: lead.id,
+      old_status: null,
+      new_status: 'pendiente_atencion',
+      notes: 'Solicitud publica de agencia recibida desde la web. Se habilita descarga de dossier y contrato.',
+      actor_type: 'public'
+    }]
+  }).catch(() => {});
+
+  const request = (await optionalSupa('control_agencies', {
+    method: 'POST',
+    body: [{
+      name: agencyName,
+      status: 'lead',
+      zone,
+      contact: contactName,
+      email,
+      phone,
+      next_follow_up: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
+      notes: [`Solicitud recibida desde la entrada publica de agencias el ${now.slice(0, 10)}.`, message].filter(Boolean).join('\n\n')
+    }]
+  }, []))[0] || null;
+
+  await audit({ type: 'public', userId: null, agencyId: null }, 'public_agency_request_created', 'leads', lead.id, {
+    agency_name: agencyName,
+    contact_name: contactName,
+    control_agency_id: request?.id || null
+  });
+
+  return json(res, 201, { ok: true, lead, request });
 }
 
 async function contractsApi(req, res, url) {
@@ -344,6 +414,14 @@ async function adminApi(req, res, url) {
   const session = requireSession(req, res, 'admin');
   if (!session) return;
 
+  if (req.method === 'GET' && url.pathname === '/api/admin/agency-requests') {
+    const [requests, leads] = await Promise.all([
+      optionalSupa('control_agencies', { query: { select: '*', status: 'eq.lead', deleted_at: 'is.null', order: 'created_at.desc', limit: '200' } }),
+      optionalSupa('leads', { query: { select: '*', product_interest: 'eq.agencia_colaboradora', order: 'created_at.desc', limit: '200' } })
+    ]);
+    return json(res, 200, { requests, leads });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/agencies') {
     return json(res, 200, { agencies: await supa('agencies', { query: { select: '*', order: 'created_at.desc', deleted_at: 'is.null' } }) });
   }
@@ -385,7 +463,7 @@ async function adminApi(req, res, url) {
       body: { invitation_token_hash: sha256(token), invited_at: new Date().toISOString(), invitation_expires_at: new Date(Date.now() + 7 * 86400000).toISOString() }
     });
     await audit(session, 'agency_invitation_created', 'agencies', agencyId);
-    const invitationUrl = `${process.env.PUBLIC_BASE_URL || ''}/#/crear-contrasena?token=${encodeURIComponent(token)}`;
+    const invitationUrl = `${process.env.PUBLIC_BASE_URL || ''}/crear-contrasena?token=${encodeURIComponent(token)}`;
     const message = agencyInvitationMessage({ agency, user, invitationUrl });
     await supa('notifications', {
       method: 'POST',
@@ -429,7 +507,7 @@ async function adminApi(req, res, url) {
     const input = await bodyJson(req);
     const nextStatus = String(input.accessStatus || '');
     if (!['invitacion_pendiente', 'activa', 'bloqueada', 'desactivada'].includes(nextStatus)) {
-      return json(res, 400, { error: 'Estado de acceso no válido' });
+      return json(res, 400, { error: 'Estado de acceso no vÃ¡lido' });
     }
 
     const agency = (await supa('agencies', {
@@ -559,6 +637,19 @@ async function adminApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/admin/reservations') {
     const reservations = await supa('reservations', { query: { deleted_at: 'is.null', select: '*,agencies(commercial_name,agency_code,main_email),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at,deposit_amount)', order: 'created_at.desc' } });
     return json(res, 200, { reservations });
+  }
+
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+$/)) {
+    const id = url.pathname.split('/')[4];
+    const reservation = await getReservationWithContext(id);
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const [travellers, payments, history, incidents] = await Promise.all([
+      supa('travellers', { query: { reservation_id: `eq.${id}`, order: 'created_at.asc' } }),
+      supa('payments', { query: { reservation_id: `eq.${id}`, order: 'created_at.desc' } }),
+      supa('reservation_status_history', { query: { reservation_id: `eq.${id}`, order: 'created_at.desc' } }),
+      supa('incidents', { query: { reservation_id: `eq.${id}`, order: 'created_at.desc' } })
+    ]);
+    return json(res, 200, { reservation, travellers, payments, history, incidents });
   }
 
   if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+\/payment-instructions$/)) {
@@ -761,7 +852,7 @@ async function adminApi(req, res, url) {
       await audit(session, 'export_csv', 'incidents', null, { type });
       return csv(res, `proyekta_incidencias_${stamp}.csv`, flattenRows(rows));
     }
-    return json(res, 404, { error: 'Exportación no encontrada' });
+    return json(res, 404, { error: 'ExportaciÃ³n no encontrada' });
   }
 
   if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/accounting\/documents\/[^/]+\/files$/)) {
@@ -889,9 +980,9 @@ async function agencyApi(req, res, url) {
       incident_code: code,
       reservation_id: input.reservationId || null,
       agency_id: session.agencyId,
-      category: required(input.category, 'Categoría'),
+      category: required(input.category, 'CategorÃ­a'),
       priority: input.priority || 'normal',
-      description: required(input.description, 'Descripción'),
+      description: required(input.description, 'DescripciÃ³n'),
       status: 'abierta'
     }] }))[0];
     await audit(session, 'incident_created', 'incidents', incident.id);
@@ -976,10 +1067,10 @@ function signedContractHtml(input, meta) {
   </style>
 </head>
 <body>
-  <h1>Acuerdo marco de colaboración comercial</h1>
+  <h1>Acuerdo marco de colaboraciÃ³n comercial</h1>
   <p class="muted">PROYEKTA VIAJES - Agencia colaboradora</p>
   <div class="box">
-    <strong>Documento firmado electrónicamente:</strong> ${e(meta.id)}<br>
+    <strong>Documento firmado electrÃ³nicamente:</strong> ${e(meta.id)}<br>
     <strong>Fecha de firma:</strong> ${e(meta.signedAt)}<br>
     <strong>IP registrada:</strong> ${e(meta.ip)}
   </div>
@@ -987,17 +1078,17 @@ function signedContractHtml(input, meta) {
   <h2>Datos de la agencia</h2>
   <table>
     <tr><th>Nombre comercial</th><td>${e(input.commercialName)}</td></tr>
-    <tr><th>Razón social</th><td>${e(input.legalName)}</td></tr>
+    <tr><th>RazÃ³n social</th><td>${e(input.legalName)}</td></tr>
     <tr><th>NIF/CIF</th><td>${e(input.taxId)}</td></tr>
-    <tr><th>Registro turístico</th><td>${e(input.tourismRegistry || '')}</td></tr>
+    <tr><th>Registro turÃ­stico</th><td>${e(input.tourismRegistry || '')}</td></tr>
     <tr><th>Domicilio</th><td>${e(input.address)}, ${e(input.postalCode)} ${e(input.city)} (${e(input.province)})</td></tr>
-    <tr><th>País</th><td>${e(input.country || 'España')}</td></tr>
+    <tr><th>PaÃ­s</th><td>${e(input.country || 'EspaÃ±a')}</td></tr>
     <tr><th>Email principal</th><td>${e(input.mainEmail)}</td></tr>
-    <tr><th>Teléfono principal</th><td>${e(input.mainPhone)}</td></tr>
+    <tr><th>TelÃ©fono principal</th><td>${e(input.mainPhone)}</td></tr>
     <tr><th>Contacto operativo</th><td>${e(input.operationsContact || '')} ${e(input.operationsEmail || '')} ${e(input.incidentsPhone || '')}</td></tr>
   </table>
 
-  <h2>Representación y firma</h2>
+  <h2>RepresentaciÃ³n y firma</h2>
   <table>
     <tr><th>Representante legal</th><td>${e(input.representativeName)}</td></tr>
     <tr><th>Documento representante</th><td>${e(input.representativeDocument)}</td></tr>
@@ -1005,12 +1096,12 @@ function signedContractHtml(input, meta) {
   </table>
 
   <h2>Condiciones aceptadas</h2>
-  <p>La agencia declara haber leído y aceptado el documento <strong>Contrato_colaboracion_agencias_Proyekta_Viajes_CORREGIDO.pdf</strong>, disponible para descarga en el portal en el momento de la firma.</p>
+  <p>La agencia declara haber leÃ­do y aceptado el documento <strong>Contrato_colaboracion_agencias_Proyekta_Viajes_CORREGIDO.pdf</strong>, disponible para descarga en el portal en el momento de la firma.</p>
   <ul>
-    <li>Comisión general inicial: 10% salvo pacto específico por producto o anexo.</li>
-    <li>El viajero pagará directamente a PROYEKTA VIAJES cuando así se indique en la ficha de salida.</li>
-    <li>La agencia se compromete a utilizar información vigente y trasladar solicitudes, pagos, incidencias y cancelaciones por los canales habilitados.</li>
-    <li>La agencia acepta el tratamiento de los datos necesarios para gestionar la colaboración.</li>
+    <li>ComisiÃ³n general inicial: 10% salvo pacto especÃ­fico por producto o anexo.</li>
+    <li>El viajero pagarÃ¡ directamente a PROYEKTA VIAJES cuando asÃ­ se indique en la ficha de salida.</li>
+    <li>La agencia se compromete a utilizar informaciÃ³n vigente y trasladar solicitudes, pagos, incidencias y cancelaciones por los canales habilitados.</li>
+    <li>La agencia acepta el tratamiento de los datos necesarios para gestionar la colaboraciÃ³n.</li>
   </ul>
 
   <h2>Firma</h2>
@@ -1020,7 +1111,7 @@ function signedContractHtml(input, meta) {
   <h2>Observaciones</h2>
   <p>${e(input.observations || '')}</p>
 
-  <p class="muted">Este documento se genera automáticamente desde el portal privado de PROYEKTA VIAJES. Debe conservarse junto con el PDF completo del contrato aceptado.</p>
+  <p class="muted">Este documento se genera automÃ¡ticamente desde el portal privado de PROYEKTA VIAJES. Debe conservarse junto con el PDF completo del contrato aceptado.</p>
   <p class="no-print"><button onclick="window.print()">Imprimir o guardar como PDF</button></p>
 </body>
 </html>`;
@@ -1257,11 +1348,11 @@ function required(value, label) {
 
 function normalizeDeparture(input) {
   return {
-    departure_code: required(input.departureCode, 'Código de salida'),
+    departure_code: required(input.departureCode, 'CÃ³digo de salida'),
     trip_name: required(input.tripName, 'Nombre del viaje'),
     destination: input.destination || 'Ribeira Sacra',
     origin_name: required(input.originName, 'Origen'),
-    origin_code: required(input.originCode, 'Código de origen').toUpperCase(),
+    origin_code: required(input.originCode, 'CÃ³digo de origen').toUpperCase(),
     starts_at: required(input.startsAt, 'Fecha de inicio'),
     ends_at: required(input.endsAt, 'Fecha de fin'),
     price_per_traveller: Number(input.pricePerTraveller || 1149),
@@ -1289,7 +1380,7 @@ function normalizeControlEntity(input) {
     postal_code: input.postalCode || null,
     city: input.city || null,
     province: input.province || null,
-    country: input.country || 'España',
+    country: input.country || 'EspaÃ±a',
     bank_account: input.bankAccount || null,
     default_payment_terms_days: Number(input.defaultPaymentTermsDays || 0),
     notes: input.notes || null,
@@ -1712,3 +1803,7 @@ if (isMain) {
     console.log(`Portal PROYEKTA activo en ${publicUrl}`);
   });
 }
+
+
+
+
