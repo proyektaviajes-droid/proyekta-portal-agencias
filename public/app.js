@@ -189,6 +189,7 @@ async function adminView(view) {
     const { agencies } = await api('/api/admin/agencies');
     target.innerHTML = html`
       <div class="toolbar"><h2>Agencias</h2><button id="newAgency">Nueva agencia</button></div>
+      <div class="notice">Alta interna: usa esta pantalla solo para crear agencias ya revisadas o para preparar una invitacion. El contrato lo descarga y envia la agencia desde la entrada publica.</div>
       <div id="agencyForm" class="panel hidden">${agencyForm()}</div>
       ${table(['CÃ³digo','Agencia','Email','Contrato','Acceso','Acciones'], agencies.map(a => [
         a.agency_code, a.commercial_name, a.main_email, badge(a.contract_status), badge(a.access_status),
@@ -480,10 +481,10 @@ function agencyActions(agency) {
     buttons.push(`<button class="ghost" data-access="activa" data-id="${agency.id}">Reactivar</button>`);
   }
   if (agency.contract_status !== 'recibido_pendiente_revision') {
-    buttons.push(`<button class="ghost" data-contract="received" data-id="${agency.id}">Contrato recibido</button>`);
+    buttons.push(`<button class="ghost" data-contract="received" data-id="${agency.id}">Marcar contrato recibido</button>`);
   }
   if (agency.contract_status !== 'verificado') {
-    buttons.push(`<button class="ghost" data-contract="verified" data-id="${agency.id}">Verificar contrato</button>`);
+    buttons.push(`<button class="ghost" data-contract="verified" data-id="${agency.id}">Aprobar contrato</button>`);
   }
   buttons.push(`<button class="ghost" data-contract="rejected" data-id="${agency.id}">Rechazar contrato</button>`);
   buttons.push(`<button class="ghost danger" data-delete-agency="${agency.id}" data-name="${esc(agency.commercial_name)}">Borrar</button>`);
@@ -640,8 +641,7 @@ function agencyForm() {
     ${input('mainPhone','TelÃ©fono')}
     ${input('representativeName','Representante')}
     ${input('commissionRate','ComisiÃ³n','number','0.10','0.01')}
-    ${input('contractSignedAt','Fecha contrato','date')}
-    <label><input name="contractSigned" type="checkbox"> Contrato firmado</label>
+    <p class="full muted">El contrato no se rellena aqui. La agencia lo envia desde la zona publica y en este panel solo se marca como recibido, verificado o rechazado.</p>
     <label class="full">Notas internas<textarea name="internalNotes"></textarea></label>
     <button class="full">Crear agencia</button>
   </form>`;
