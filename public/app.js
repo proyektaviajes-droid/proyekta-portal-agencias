@@ -191,14 +191,16 @@ async function adminView(view) {
   }
   if (view === 'adminAgencies') {
     const { agencies } = await api('/api/admin/agencies');
+    const collaborators = agencies.filter(a => a.contract_status === 'verificado' && a.access_status === 'activa');
+    const pending = agencies.filter(a => !(a.contract_status === 'verificado' && a.access_status === 'activa') && !['bloqueada','desactivada'].includes(a.access_status));
+    const blocked = agencies.filter(a => ['bloqueada','desactivada'].includes(a.access_status));
     target.innerHTML = html`
       <div class="toolbar"><h2>Agencias</h2><button id="newAgency">Nueva agencia</button></div>
-      <div class="notice">Alta interna: usa esta pantalla solo para crear agencias ya revisadas o para preparar una invitacion. El contrato lo descarga y envia la agencia desde la entrada publica.</div>
+      <div class="notice">Solicitudes y pendientes por un lado. Colaboradoras activas por otro. Una agencia ya aprobada no necesita generar invitacion salvo reenvio excepcional.</div>
       <div id="agencyForm" class="panel hidden">${agencyForm()}</div>
-      ${table(['CÃ³digo','Agencia','Email','Estado contrato','Acceso','Acciones'], agencies.map(a => [
-        a.agency_code, a.commercial_name, a.main_email, badge(a.contract_status), badge(a.access_status),
-        agencyActions(a)
-      ]))}
+      ${agencySection('Pendientes de aprobar / revisar', pending)}
+      ${agencySection('Agencias colaboradoras activas', collaborators)}
+      ${agencySection('Bloqueadas o desactivadas', blocked)}
     `;
     document.querySelector('#newAgency').onclick = () => document.querySelector('#agencyForm').classList.toggle('hidden');
     document.querySelector('#createAgency')?.addEventListener('submit', createAgency);
@@ -206,9 +208,15 @@ async function adminView(view) {
       const data = await api(`/api/admin/agencies/${btn.dataset.invite}/invite`, { method: 'POST' });
       showInvitation(data);
     });
+    target.querySelectorAll('[data-approve-agency]').forEach(btn => btn.onclick = async () => {
+      if (!confirm('Aprobar esta agencia como colaboradora activa?')) return;
+      await api(`/api/admin/agencies/${btn.dataset.approveAgency}/collaborator`, { method: 'PATCH' });
+      adminView('adminAgencies');
+    });
+    target.querySelectorAll('[data-open-agency]').forEach(btn => btn.onclick = () => alert('Ficha de agencia en preparacion. Sus reservas y pagos ya aparecen vinculados por agencia.'));
     target.querySelectorAll('[data-access]').forEach(btn => btn.onclick = async () => {
       const label = btn.dataset.access === 'bloqueada' ? 'bloquear' : btn.dataset.access === 'desactivada' ? 'desactivar' : 'reactivar';
-      if (!confirm(`Â¿Seguro que quieres ${label} esta agencia?`)) return;
+      if (!confirm(`Seguro que quieres ${label} esta agencia?`)) return;
       await api(`/api/admin/agencies/${btn.dataset.id}/access`, { method: 'PATCH', body: { accessStatus: btn.dataset.access } });
       adminView('adminAgencies');
     });
@@ -224,7 +232,7 @@ async function adminView(view) {
     });
     target.querySelectorAll('[data-delete-agency]').forEach(btn => btn.onclick = async () => {
       const name = btn.dataset.name || 'esta agencia';
-      const ok = confirm(`Â¿Borrar ${name}? DesaparecerÃ¡ de la lista y no podrÃ¡ acceder al portal.`);
+      const ok = confirm(`Borrar ${name}? Se desactivara su acceso y desaparecera de la lista.`);
       if (!ok) return;
       await api(`/api/admin/agencies/${btn.dataset.deleteAgency}`, { method: 'DELETE' });
       adminView('adminAgencies');
@@ -281,15 +289,10 @@ async function adminView(view) {
   }
   if (view === 'adminPayments') {
     const { payments } = await api('/api/admin/payments');
-    target.innerHTML = html`<h2>Pagos</h2>${table(['Reserva','Agencia','Importe','MÃ©todo','Estado','Referencia','Acciones'], payments.map(p => [
-      p.reservations?.reservation_code, p.agencies?.commercial_name, money(p.amount), p.method, badge(p.status), p.external_reference || '',
-      p.status === 'verificado' ? 'Verificado' : `<button data-verify="${p.id}">Verificar</button>`
+    target.innerHTML = html`<h2>Pagos</h2><div class="notice">Puedes verificar, anular, devolver o borrar pagos. Al cambiar un pago se recalcula automaticamente lo pagado en la reserva.</div>${table(['Reserva','Agencia','Importe','Metodo','Estado','Referencia','Acciones'], payments.map(p => [
+      p.reservations?.reservation_code, p.agencies?.commercial_name, money(p.amount), p.method, badge(p.status), p.external_reference || '', paymentActions(p)
     ]))}`;
-    target.querySelectorAll('[data-verify]').forEach(btn => btn.onclick = async () => {
-      const data = await api(`/api/admin/payments/${btn.dataset.verify}/verify`, { method: 'PATCH' });
-      alert(data.readyToConfirm ? 'Pago verificado. La reserva ya tiene el mÃ­nimo para confirmar.' : 'Pago verificado y sumado a la reserva.');
-      adminView('adminPayments');
-    });
+    bindAdminPaymentButtons(target);
   }
   if (view === 'adminGestoria') {
     try {
@@ -728,32 +731,32 @@ async function convertAgencyLead(id) {
   adminView('adminAgencies');
 }
 function agencyActions(agency) {
-  const buttons = [];
-  if (agency.access_status === 'activa') {
-    buttons.push(`<span class="status">Acceso activo</span>`);
-    buttons.push(`<button class="ghost" data-invite="${agency.id}">Reenviar acceso</button>`);
-  } else if (agency.access_status === 'invitacion_pendiente') {
-    buttons.push(`<span class="status">Invitacion enviada</span>`);
-    buttons.push(`<button data-invite="${agency.id}">Reenviar acceso</button>`);
-  } else if (agency.access_status === 'bloqueada' || agency.access_status === 'desactivada') {
-    buttons.push(`<span class="status danger">Acceso ${esc(agency.access_status)}</span>`);
-    buttons.push(`<button class="ghost" data-access="activa" data-id="${agency.id}">Reactivar</button>`);
+  const buttons = [`<button data-open-agency="${agency.id}">Abrir ficha</button>`];
+  const isCollaborator = agency.contract_status === 'verificado' && agency.access_status === 'activa';
+  if (isCollaborator) {
+    buttons.push(`<span class="status">Agencia colaboradora</span>`);
   } else {
-    buttons.push(`<button data-invite="${agency.id}">Enviar primer acceso</button>`);
+    buttons.push(`<button data-approve-agency="${agency.id}">Aprobar como colaboradora</button>`);
+    if (agency.access_status === 'invitacion_pendiente') buttons.push(`<button class="ghost" data-invite="${agency.id}">Reenviar acceso</button>`);
+    else if (agency.access_status !== 'activa') buttons.push(`<button class="ghost" data-invite="${agency.id}">Enviar acceso</button>`);
   }
   if (agency.access_status === 'activa' || agency.access_status === 'invitacion_pendiente') {
     buttons.push(`<button class="ghost" data-access="bloqueada" data-id="${agency.id}">Bloquear</button>`);
     buttons.push(`<button class="ghost" data-access="desactivada" data-id="${agency.id}">Desactivar</button>`);
+  } else if (agency.access_status === 'bloqueada' || agency.access_status === 'desactivada') {
+    buttons.push(`<button class="ghost" data-access="activa" data-id="${agency.id}">Reactivar</button>`);
   }
-  if (agency.contract_status !== 'recibido_pendiente_revision') {
-    buttons.push(`<button class="ghost" data-contract="received" data-id="${agency.id}">Marcar contrato recibido</button>`);
-  }
-  if (agency.contract_status !== 'verificado') {
-    buttons.push(`<button class="ghost" data-contract="verified" data-id="${agency.id}">Aprobar contrato</button>`);
-  }
+  if (agency.contract_status !== 'recibido_pendiente_revision') buttons.push(`<button class="ghost" data-contract="received" data-id="${agency.id}">Marcar contrato recibido</button>`);
+  if (agency.contract_status !== 'verificado') buttons.push(`<button class="ghost" data-contract="verified" data-id="${agency.id}">Aprobar contrato</button>`);
   buttons.push(`<button class="ghost" data-contract="rejected" data-id="${agency.id}">Rechazar contrato</button>`);
   buttons.push(`<button class="ghost danger" data-delete-agency="${agency.id}" data-name="${esc(agency.commercial_name)}">Borrar</button>`);
   return `<div class="actions">${buttons.join('')}</div>`;
+}
+
+function agencySection(title, rows) {
+  return `<h3>${esc(title)} (${rows.length})</h3>${rows.length ? table(['Codigo','Agencia','Email','Estado contrato','Acceso','Acciones'], rows.map(a => [
+    a.agency_code, a.commercial_name, a.main_email, badge(a.contract_status), badge(a.access_status), agencyActions(a)
+  ])) : '<p class="muted">Sin agencias en este bloque.</p>'}`;
 }
 
 function renderAgency() {
@@ -1291,12 +1294,44 @@ function accountingDocActions(doc, files = []) {
 }
 
 
+function paymentActions(p) {
+  const buttons = [];
+  if (p.status !== 'verificado') buttons.push(`<button data-verify="${p.id}">Verificar</button>`);
+  if (p.status === 'verificado' && Number(p.amount || 0) > 0) buttons.push(`<button class="ghost" data-refund-payment="${p.id}">Devolver</button>`);
+  if (!['anulado','devuelto'].includes(p.status)) buttons.push(`<button class="ghost" data-cancel-payment="${p.id}">Anular</button>`);
+  buttons.push(`<button class="ghost danger" data-delete-payment="${p.id}">Borrar</button>`);
+  return `<div class="actions">${buttons.join('')}</div>`;
+}
+
+function bindAdminPaymentButtons(target) {
+  target.querySelectorAll('[data-verify]').forEach(btn => btn.onclick = async () => {
+    const data = await api(`/api/admin/payments/${btn.dataset.verify}/verify`, { method: 'PATCH' });
+    alert(data.readyToConfirm ? 'Pago verificado. La reserva ya tiene el minimo para confirmar.' : 'Pago verificado y sumado a la reserva.');
+    adminView('adminPayments');
+  });
+  target.querySelectorAll('[data-cancel-payment]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Anular este pago y recalcular la reserva?')) return;
+    await api(`/api/admin/payments/${btn.dataset.cancelPayment}/cancel`, { method: 'PATCH' });
+    adminView('adminPayments');
+  });
+  target.querySelectorAll('[data-refund-payment]').forEach(btn => btn.onclick = async () => {
+    const amount = prompt('Importe a devolver:', '');
+    if (amount === null) return;
+    await api(`/api/admin/payments/${btn.dataset.refundPayment}/refund`, { method: 'POST', body: { amount: parseMoneyInput(amount) } });
+    adminView('adminPayments');
+  });
+  target.querySelectorAll('[data-delete-payment]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Borrar este pago definitivamente? Si era valido, se recalculara la reserva.')) return;
+    await api(`/api/admin/payments/${btn.dataset.deletePayment}`, { method: 'DELETE' });
+    adminView('adminPayments');
+  });
+}
 function travellersTable(rows) {
   return table(['Nombre','DNI','Telefono','Email','Agencia','Reserva','Salida','Habitacion','Documentos','Acciones'], rows.map(t => {
     const isLead = String(t.id || '').startsWith('reservation:');
     const actions = isLead
       ? `<div class="actions"><button data-open-traveller="${t.id}">Abrir titular</button><button data-create-lead-traveller="${t.reservation_id}">Crear ficha viajero</button><span class="status">Pendiente ficha viajero</span></div>`
-      : `<div class="actions"><button data-open-traveller="${t.id}">Abrir ficha</button><button class="ghost" data-upload-traveller-doc="${t.id}">Subir documento</button></div>`;
+      : `<div class="actions"><button data-open-traveller="${t.id}">Abrir ficha</button><button class="ghost" data-upload-traveller-doc="${t.id}">Subir documento</button><button class="ghost danger" data-delete-traveller="${t.id}" data-name="${esc(fullName(t))}">Eliminar</button></div>`;
     return [fullName(t), t.document_number || t.identity_document || '', t.phone || '', t.email || '', t.agencies?.commercial_name || '', t.reservations?.reservation_code || '', t.reservations?.departures?.departure_code || '', t.room_type || '', t.documents_count || 0, actions];
   }));
 }
@@ -1305,6 +1340,12 @@ function bindAdminTravellerButtons(target) {
   target.querySelectorAll('[data-open-traveller]').forEach(btn => btn.onclick = () => openAdminTraveller(btn.dataset.openTraveller));
   target.querySelectorAll('[data-upload-traveller-doc]').forEach(btn => btn.onclick = () => uploadTravellerDocument(btn.dataset.uploadTravellerDoc));
   target.querySelectorAll('[data-create-lead-traveller]').forEach(btn => btn.onclick = () => createTravellerFromReservation(btn.dataset.createLeadTraveller));
+  target.querySelectorAll('[data-delete-traveller]').forEach(btn => btn.onclick = async () => {
+    const name = btn.dataset.name || 'este viajero';
+    if (!confirm('Eliminar ' + name + '? Se borrara su ficha y sus documentos vinculados.')) return;
+    await api('/api/admin/travellers/' + btn.dataset.deleteTraveller, { method: 'DELETE' });
+    await adminView('adminTravellers');
+  });
 }
 
 async function createTravellerFromReservation(reservationId) {

@@ -763,6 +763,14 @@ async function adminApi(req, res, url) {
     return json(res, 200, { agency });
   }
 
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/agencies\/[^/]+\/collaborator$/)) {
+    const agencyId = url.pathname.split('/')[4];
+    const agency = (await supa('agencies', { method: 'PATCH', query: { id: `eq.${agencyId}`, deleted_at: 'is.null' }, body: { contract_status: 'verificado', access_status: 'activa', contract_verified_at: new Date().toISOString() } }))[0];
+    if (!agency) return json(res, 404, { error: 'Agencia no encontrada' });
+    await supa('agency_users', { method: 'PATCH', query: { agency_id: `eq.${agencyId}` }, body: { is_active: true } });
+    await audit(session, 'agency_approved_collaborator', 'agencies', agencyId);
+    return json(res, 200, { agency });
+  }
   if (req.method === 'GET' && url.pathname === '/api/admin/departures') {
     return json(res, 200, { departures: await supa('departures', { query: { select: '*', order: 'starts_at.asc' } }) });
   }
@@ -916,6 +924,15 @@ async function adminApi(req, res, url) {
     return json(res, 200, { travellers: [...real, ...leads] });
   }
 
+  if (req.method === 'DELETE' && url.pathname.match(/^\/api\/admin\/travellers\/[^/]+$/)) {
+    const id = url.pathname.split('/')[4];
+    const traveller = (await supa('travellers', { query: { id: `eq.${id}`, limit: '1' } }))[0];
+    if (!traveller) return json(res, 404, { error: 'Viajero no encontrado' });
+    await optionalSupa('documents', { method: 'DELETE', query: { traveller_id: `eq.${id}` } }, []);
+    await supa('travellers', { method: 'DELETE', query: { id: `eq.${id}` } });
+    await audit(session, 'traveller_deleted', 'travellers', id, { reservation_id: traveller.reservation_id || null });
+    return json(res, 200, { ok: true });
+  }
   if (req.method === 'GET' && url.pathname.match(/^\/api\/admin\/travellers\/[^/]+$/)) {
     const id = url.pathname.split('/')[4];
     const traveller = (await supa('travellers', { query: { id: `eq.${id}`, select: '*,agencies(commercial_name,agency_code),reservations(reservation_code,status,departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at))', limit: '1' } }))[0];
@@ -960,6 +977,39 @@ async function adminApi(req, res, url) {
     return json(res, 200, { payment, reservation, readyToConfirm: Number(reservation?.paid_amount || 0) >= Number(reservation?.required_payment || 0) });
   }
 
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/payments\/[^/]+\/cancel$/)) {
+    const id = url.pathname.split('/')[4];
+    const current = (await supa('payments', { query: { id: `eq.${id}`, limit: '1' } }))[0];
+    if (!current) return json(res, 404, { error: 'Pago no encontrado' });
+    const payment = (await supa('payments', { method: 'PATCH', query: { id: `eq.${id}` }, body: { status: 'anulado' } }))[0];
+    const reservation = payment.reservation_id ? await updateReservationPaidAmount(payment.reservation_id) : null;
+    await audit(session, 'payment_cancelled', 'payments', id);
+    return json(res, 200, { payment, reservation });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/payments\/[^/]+\/refund$/)) {
+    const id = url.pathname.split('/')[4];
+    const input = await bodyJson(req);
+    const original = (await supa('payments', { query: { id: `eq.${id}`, limit: '1' } }))[0];
+    if (!original) return json(res, 404, { error: 'Pago no encontrado' });
+    const requested = roundMoney(input.amount || original.amount);
+    const amount = Math.min(Math.abs(requested), Math.abs(Number(original.amount || 0)));
+    if (!Number.isFinite(amount) || amount <= 0) return json(res, 400, { error: 'Importe de devolucion no valido' });
+    const refund = (await supa('payments', { method: 'POST', body: [{ reservation_id: original.reservation_id || null, agency_id: original.agency_id || null, payer_name: original.payer_name || null, amount: -amount, concept: `Devolucion de pago ${id}`, method: original.method || 'transferencia', status: 'verificado', external_reference: input.externalReference || null, verified_by_admin_id: session.userId, verified_at: new Date().toISOString() }] }))[0];
+    const reservation = original.reservation_id ? await updateReservationPaidAmount(original.reservation_id) : null;
+    await audit(session, 'payment_refunded', 'payments', refund.id, { original_payment_id: id, amount });
+    return json(res, 201, { payment: refund, reservation });
+  }
+
+  if (req.method === 'DELETE' && url.pathname.match(/^\/api\/admin\/payments\/[^/]+$/)) {
+    const id = url.pathname.split('/')[4];
+    const current = (await supa('payments', { query: { id: `eq.${id}`, limit: '1' } }))[0];
+    if (!current) return json(res, 404, { error: 'Pago no encontrado' });
+    await supa('payments', { method: 'DELETE', query: { id: `eq.${id}` } });
+    const reservation = current.reservation_id ? await updateReservationPaidAmount(current.reservation_id) : null;
+    await audit(session, 'payment_deleted', 'payments', id, { reservation_id: current.reservation_id || null });
+    return json(res, 200, { ok: true, reservation });
+  }
   if (req.method === 'GET' && url.pathname === '/api/admin/incidents') {
     return json(res, 200, { incidents: await supa('incidents', { query: { select: '*,agencies(commercial_name,agency_code)', order: 'created_at.desc' } }) });
   }
