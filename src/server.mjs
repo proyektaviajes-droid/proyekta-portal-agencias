@@ -422,6 +422,68 @@ async function adminApi(req, res, url) {
     return json(res, 200, { requests, leads });
   }
 
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/agency-requests\/[^/]+$/)) {
+    const requestId = url.pathname.split('/')[4];
+    const input = await bodyJson(req);
+    const action = String(input.action || '');
+    const now = new Date().toISOString();
+    const existing = (await optionalSupa('control_agencies', { query: { id: `eq.${requestId}`, limit: '1' } }, []))[0];
+    if (!existing) return json(res, 404, { error: 'Solicitud no encontrada' });
+
+    const note = String(input.note || '').trim();
+    const notes = [existing.notes, note ? `${now.slice(0, 10)} - ${note}` : null].filter(Boolean).join('\n\n');
+    let patch = { notes };
+
+    if (action === 'contacted') {
+      patch.next_follow_up = input.nextFollowUp || existing.next_follow_up || null;
+      patch.status = 'lead';
+    } else if (action === 'discarded') {
+      patch.status = 'descartada';
+      patch.deleted_at = now;
+    } else {
+      return json(res, 400, { error: 'Accion de solicitud no valida' });
+    }
+
+    const request = (await supa('control_agencies', { method: 'PATCH', query: { id: `eq.${requestId}` }, body: patch }))[0];
+    await audit(session, `agency_request_${action}`, 'control_agencies', requestId, patch);
+    return json(res, 200, { request });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/agency-requests\/[^/]+\/convert$/)) {
+    const requestId = url.pathname.split('/')[4];
+    const request = (await optionalSupa('control_agencies', { query: { id: `eq.${requestId}`, deleted_at: 'is.null', limit: '1' } }, []))[0];
+    if (!request) return json(res, 404, { error: 'Solicitud no encontrada' });
+
+    const duplicate = (await supa('agencies', { query: { main_email: `eq.${request.email}`, deleted_at: 'is.null', limit: '1' } }))[0];
+    if (duplicate) return json(res, 409, { error: 'Ya existe una agencia con ese email' });
+
+    const code = await nextAgencyCode();
+    const agency = (await supa('agencies', { method: 'POST', body: [{
+      agency_code: code,
+      commercial_name: required(request.name, 'Nombre comercial'),
+      legal_name: request.name || null,
+      tax_id: null,
+      main_email: required(request.email, 'Correo principal'),
+      main_phone: request.phone || null,
+      representative_name: request.contact || null,
+      default_commission_rate: 0.10,
+      contract_declared_signed: false,
+      contract_status: 'pendiente',
+      access_status: 'invitacion_pendiente',
+      internal_notes: [
+        `Creada desde solicitud publica ${new Date().toISOString().slice(0, 10)}.`,
+        request.zone ? `Zona: ${request.zone}` : null,
+        request.notes || null
+      ].filter(Boolean).join('\n\n')
+    }] }))[0];
+
+    await supa('agency_users', { method: 'POST', body: [{ agency_id: agency.id, name: request.contact || request.name, email: request.email, role: 'principal' }] });
+    await supa('control_agencies', { method: 'PATCH', query: { id: `eq.${requestId}` }, body: { status: 'convertida', deleted_at: new Date().toISOString(), notes: [request.notes, `Convertida en agencia ${agency.agency_code}.`].filter(Boolean).join('\n\n') } });
+    await audit(session, 'agency_request_converted', 'control_agencies', requestId, { agency_id: agency.id, agency_code: agency.agency_code });
+    await audit(session, 'agency_created_from_request', 'agencies', agency.id, { request_id: requestId });
+    return json(res, 201, { agency });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/agencies') {
     return json(res, 200, { agencies: await supa('agencies', { query: { select: '*', order: 'created_at.desc', deleted_at: 'is.null' } }) });
   }

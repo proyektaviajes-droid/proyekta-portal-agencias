@@ -173,17 +173,20 @@ async function adminView(view) {
   const target = document.querySelector('#view');
   if (view === 'adminRequests') {
     const { requests, leads } = await api('/api/admin/agency-requests');
+    state.adminRequests = requests;
     target.innerHTML = html`
       <div class="toolbar"><h2>Solicitudes de agencias</h2><button id="refreshRequests">Actualizar</button></div>
-      <div class="notice">Aqui aparecen las agencias que han dejado sus datos en la entrada publica. Todavia no tienen acceso al portal. Cuando recibas y valides el contrato, las creas como agencia activa y les generas la invitacion.</div>
-      ${table(['Agencia','Contacto','Email','Telefono','Zona','Seguimiento','Notas'], requests.map(r => [
-        esc(r.name), esc(r.contact), esc(r.email), esc(r.phone), esc(r.zone), esc(r.next_follow_up), esc(r.notes || '')
+      <div class="notice">Aqui aparecen las agencias que han pedido colaborar. Desde aqui puedes abrir la ficha, contactar, crear la agencia o descartar la solicitud.</div>
+      <div id="requestDetail"></div>
+      ${table(['Agencia','Contacto','Email','Telefono','Zona','Seguimiento','Notas','Acciones'], requests.map(r => [
+        esc(r.name), esc(r.contact), esc(r.email), esc(r.phone), esc(r.zone), esc(r.next_follow_up), esc(r.notes || ''), requestActions(r)
       ]))}
       <h3>Historial comercial recibido</h3>
       ${table(['Codigo','Nombre','Email','Telefono','Zona','Estado','Proximo paso','Notas'], leads.map(l => [
         esc(l.lead_code), esc(l.name), esc(l.email), esc(l.phone), esc(l.zone), badge(l.status), esc(l.next_action), esc(l.notes || '')
       ]))}`;
     document.querySelector('#refreshRequests').onclick = () => adminView('adminRequests');
+    bindAdminRequestButtons(target);
   }
   if (view === 'adminAgencies') {
     const { agencies } = await api('/api/admin/agencies');
@@ -191,7 +194,7 @@ async function adminView(view) {
       <div class="toolbar"><h2>Agencias</h2><button id="newAgency">Nueva agencia</button></div>
       <div class="notice">Alta interna: usa esta pantalla solo para crear agencias ya revisadas o para preparar una invitacion. El contrato lo descarga y envia la agencia desde la entrada publica.</div>
       <div id="agencyForm" class="panel hidden">${agencyForm()}</div>
-      ${table(['CÃ³digo','Agencia','Email','Contrato','Acceso','Acciones'], agencies.map(a => [
+      ${table(['CÃ³digo','Agencia','Email','Estado contrato','Acceso','Acciones'], agencies.map(a => [
         a.agency_code, a.commercial_name, a.main_email, badge(a.contract_status), badge(a.access_status),
         agencyActions(a)
       ]))}
@@ -471,6 +474,92 @@ function detailRows(rows) {
 
 function fullName(t) {
   return [t.first_name, t.last_name1, t.last_name2].filter(Boolean).join(' ') || t.full_name || '';
+}
+
+function requestActions(request) {
+  return `<div class="actions">
+    <button data-request-open="${request.id}">Abrir ficha</button>
+    <button class="ghost" data-request-copy="${request.id}">Copiar respuesta</button>
+    <button class="ghost" data-request-contact="${request.id}">Marcar contactada</button>
+    <button class="ghost" data-request-convert="${request.id}">Crear agencia</button>
+    <button class="ghost danger" data-request-discard="${request.id}">Descartar</button>
+  </div>`;
+}
+
+function bindAdminRequestButtons(target) {
+  target.querySelectorAll('[data-request-open]').forEach(btn => btn.onclick = () => {
+    const request = (state.adminRequests || []).find(r => String(r.id) === String(btn.dataset.requestOpen));
+    if (request) document.querySelector('#requestDetail').innerHTML = renderRequestDetail(request);
+  });
+  target.querySelectorAll('[data-request-copy]').forEach(btn => btn.onclick = () => copyAgencyRequestReply(btn.dataset.requestCopy));
+  target.querySelectorAll('[data-request-contact]').forEach(btn => btn.onclick = () => markAgencyRequestContacted(btn.dataset.requestContact));
+  target.querySelectorAll('[data-request-convert]').forEach(btn => btn.onclick = () => convertAgencyRequest(btn.dataset.requestConvert));
+  target.querySelectorAll('[data-request-discard]').forEach(btn => btn.onclick = () => discardAgencyRequest(btn.dataset.requestDiscard));
+}
+
+function renderRequestDetail(r) {
+  return `<section class="panel">
+    <div class="toolbar"><h3>${esc(r.name)}</h3><span>${badge(r.status || 'solicitud')}</span></div>
+    ${detailRows([
+      ['Contacto', r.contact], ['Email', r.email], ['Telefono', r.phone], ['Zona', r.zone], ['Proximo seguimiento', r.next_follow_up], ['Notas', r.notes]
+    ])}
+    <div class="actions">${requestActions(r)}</div>
+  </section>`;
+}
+
+function agencyRequestById(id) {
+  return (state.adminRequests || []).find(r => String(r.id) === String(id));
+}
+
+function agencyRequestReplyText(r) {
+  return `Hola ${r.contact || ''},
+
+Gracias por contactar con PROYEKTA VIAJES. Te enviamos la documentacion de colaboracion para agencias.
+
+Dossier: ${location.origin}/dossiers/PROYEKTA_Dossier_Colaboracion_Agencias_2027_REVISADO.pdf
+Contrato: ${location.origin}/contrato-agencias.html
+
+Cuando recibamos el contrato firmado, lo revisaremos y, si esta todo correcto, activaremos vuestro acceso al portal para registrar reservas.
+
+Un saludo,
+PROYEKTA VIAJES`;
+}
+
+async function copyAgencyRequestReply(id) {
+  const r = agencyRequestById(id);
+  if (!r) return alert('Solicitud no encontrada');
+  const text = agencyRequestReplyText(r);
+  if (navigator.clipboard) {
+    await navigator.clipboard.writeText(text);
+    alert('Respuesta copiada. Pegala en el correo o WhatsApp de la agencia.');
+  } else {
+    prompt('Copia este mensaje:', text);
+  }
+}
+
+async function markAgencyRequestContacted(id) {
+  const nextFollowUp = prompt('Proximo seguimiento (AAAA-MM-DD):', new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10));
+  if (nextFollowUp === null) return;
+  const note = prompt('Nota de seguimiento:', 'Contactada y enviada documentacion comercial.');
+  if (note === null) return;
+  await api(`/api/admin/agency-requests/${id}`, { method: 'PATCH', body: { action: 'contacted', nextFollowUp, note } });
+  adminView('adminRequests');
+}
+
+async function discardAgencyRequest(id) {
+  const reason = prompt('Motivo para descartar la solicitud:', 'No interesa / duplicada / sin respuesta.');
+  if (reason === null) return;
+  await api(`/api/admin/agency-requests/${id}`, { method: 'PATCH', body: { action: 'discarded', note: reason } });
+  adminView('adminRequests');
+}
+
+async function convertAgencyRequest(id) {
+  const r = agencyRequestById(id);
+  if (!r) return alert('Solicitud no encontrada');
+  if (!confirm(`Crear agencia para ${r.name}? Quedara lista para generar invitacion.`)) return;
+  const result = await api(`/api/admin/agency-requests/${id}/convert`, { method: 'POST' });
+  alert(`Agencia creada: ${result.agency.agency_code}. Ahora puedes generar el acceso desde Agencias.`);
+  adminView('adminAgencies');
 }
 function agencyActions(agency) {
   const buttons = [`<button data-invite="${agency.id}">Generar invitaciÃ³n</button>`];
