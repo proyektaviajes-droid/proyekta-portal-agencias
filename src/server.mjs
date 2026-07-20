@@ -194,13 +194,13 @@ async function restoreBackup(backup) {
     const counts = {};
     for (const name of names) {
       const rows = backup.tables[name];
-      if (rows.length) await supa(name, { method: 'POST', query: { on_conflict: 'id' }, body: rows });
+      if (rows.length) await supa(name, { method: 'POST', body: rows });
       counts[name] = rows.length;
     }
     return { counts, total };
   } catch (error) {
     for (const name of names) {
-      try { if (snapshot[name].length) await supa(name, { method: 'POST', query: { on_conflict: 'id' }, body: snapshot[name] }); } catch {}
+      try { if (snapshot[name].length) await supa(name, { method: 'POST', body: snapshot[name] }); } catch {}
     }
     throw new Error(`No se pudo completar la restauracion y se intento revertir: ${error.message}`);
   }
