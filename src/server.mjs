@@ -701,8 +701,13 @@ async function adminApi(req, res, url) {
       patch.contract_document_url = input.documentUrl || null;
     } else if (action === 'received') {
       patch.contract_declared_signed = true;
-      patch.contract_status = 'recibido_pendiente_revision';
+      patch.contract_status = 'verificado';
+      patch.access_status = 'invitacion_pendiente';
       patch.contract_received_at = now;
+      patch.contract_verified_at = now;
+      patch.contract_verified_by = session.email;
+      patch.contract_rejected_at = null;
+      patch.contract_rejection_reason = null;
       patch.contract_document_url = input.documentUrl || null;
     } else if (action === 'verified') {
       patch.contract_declared_signed = true;
@@ -729,7 +734,7 @@ async function adminApi(req, res, url) {
     }))[0];
     if (!agency) return json(res, 404, { error: 'Agencia no encontrada' });
     await audit(session, 'agency_contract_updated', 'agencies', agencyId, patch);
-    if (action === 'verified') {
+    if (action === 'received' || action === 'verified') {
       await supa('agency_users', { method: 'PATCH', query: { agency_id: `eq.${agencyId}` }, body: { is_active: true } });
       const invitation = await createAgencyInvitation(session, agencyId);
       return json(res, 200, { agency, ...invitation });

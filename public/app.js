@@ -766,10 +766,9 @@ function agencyActions(agency) {
   const isCollaborator = agency.contract_status === 'verificado' && agency.access_status === 'activa';
   if (isCollaborator) {
     buttons.push(`<span class="status">Agencia colaboradora</span>`);
-  } else {
-    buttons.push(`<button data-approve-agency="${agency.id}">Aprobar como colaboradora</button>`);
-    if (agency.access_status === 'invitacion_pendiente') buttons.push(`<button class="ghost" data-invite="${agency.id}">Reenviar acceso</button>`);
-    else if (agency.access_status !== 'activa') buttons.push(`<button class="ghost" data-invite="${agency.id}">Enviar acceso</button>`);
+  } else if (agency.contract_status === 'verificado' && agency.access_status === 'invitacion_pendiente') {
+    buttons.push(`<span class="status">Acceso pendiente de contraseña</span>`);
+    buttons.push(`<button class="ghost" data-invite="${agency.id}">Reenviar acceso</button>`);
   }
   if (agency.access_status === 'activa' || agency.access_status === 'invitacion_pendiente') {
     buttons.push(`<button class="ghost" data-access="bloqueada" data-id="${agency.id}">Bloquear</button>`);
@@ -777,8 +776,12 @@ function agencyActions(agency) {
   } else if (agency.access_status === 'bloqueada' || agency.access_status === 'desactivada') {
     buttons.push(`<button class="ghost" data-access="activa" data-id="${agency.id}">Reactivar</button>`);
   }
-  if (agency.contract_status !== 'recibido_pendiente_revision') buttons.push(`<button class="ghost" data-contract="received" data-id="${agency.id}">Marcar contrato recibido</button>`);
-  if (agency.contract_status !== 'verificado') buttons.push(`<button class="ghost" data-contract="verified" data-id="${agency.id}">Aprobar contrato y generar acceso</button>`);
+  if (agency.contract_status !== 'verificado' && agency.contract_status !== 'recibido_pendiente_revision') {
+    buttons.push(`<button data-contract="received" data-id="${agency.id}">Contrato recibido: aprobar y generar acceso</button>`);
+  }
+  if (agency.contract_status === 'recibido_pendiente_revision') {
+    buttons.push(`<button data-contract="verified" data-id="${agency.id}">Aprobar contrato y generar acceso</button>`);
+  }
   buttons.push(`<button class="ghost" data-contract="rejected" data-id="${agency.id}">Rechazar contrato</button>`);
   buttons.push(`<button class="ghost danger" data-delete-agency="${agency.id}" data-name="${esc(agency.commercial_name)}">Borrar</button>`);
   return `<div class="actions">${buttons.join('')}</div>`;
