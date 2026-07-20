@@ -196,7 +196,7 @@ async function adminView(view) {
     const blocked = agencies.filter(a => ['bloqueada','desactivada'].includes(a.access_status));
     target.innerHTML = html`
       <div class="toolbar"><h2>Agencias</h2><button id="newAgency">Nueva agencia</button></div>
-      <div class="notice">Solicitudes y pendientes por un lado. Colaboradoras activas por otro. Una agencia ya aprobada no necesita generar invitacion salvo reenvio excepcional.</div>
+      <div class="notice">Solicitudes y pendientes por un lado. Colaboradoras activas por otro. Al aprobar el contrato se genera el enlace para crear la contraseña. La agencia solo pasa a activa cuando completa ese paso.</div>
       <div id="agencyForm" class="panel hidden">${agencyForm()}</div>
       ${agencySection('Pendientes de aprobar / revisar', pending)}
       ${agencySection('Agencias colaboradoras activas', collaborators)}
@@ -209,8 +209,9 @@ async function adminView(view) {
       showInvitation(data);
     });
     target.querySelectorAll('[data-approve-agency]').forEach(btn => btn.onclick = async () => {
-      if (!confirm('Aprobar esta agencia como colaboradora activa?')) return;
-      await api(`/api/admin/agencies/${btn.dataset.approveAgency}/collaborator`, { method: 'PATCH' });
+      if (!confirm('Aprobar esta agencia y generar ahora el enlace para crear su contraseña?')) return;
+      const data = await api(`/api/admin/agencies/${btn.dataset.approveAgency}/collaborator`, { method: 'PATCH' });
+      showInvitation(data);
       adminView('adminAgencies');
     });
     target.querySelectorAll('[data-open-agency]').forEach(btn => btn.onclick = () => alert('Ficha de agencia en preparacion. Sus reservas y pagos ya aparecen vinculados por agencia.'));
@@ -227,7 +228,8 @@ async function adminView(view) {
         if (reason === null) return;
         body.reason = reason;
       }
-      await api(`/api/admin/agencies/${btn.dataset.id}/contract`, { method: 'PATCH', body });
+      const data = await api(`/api/admin/agencies/${btn.dataset.id}/contract`, { method: 'PATCH', body });
+      if (data.invitationUrl) showInvitation(data);
       adminView('adminAgencies');
     });
     target.querySelectorAll('[data-delete-agency]').forEach(btn => btn.onclick = async () => {
@@ -776,7 +778,7 @@ function agencyActions(agency) {
     buttons.push(`<button class="ghost" data-access="activa" data-id="${agency.id}">Reactivar</button>`);
   }
   if (agency.contract_status !== 'recibido_pendiente_revision') buttons.push(`<button class="ghost" data-contract="received" data-id="${agency.id}">Marcar contrato recibido</button>`);
-  if (agency.contract_status !== 'verificado') buttons.push(`<button class="ghost" data-contract="verified" data-id="${agency.id}">Aprobar contrato</button>`);
+  if (agency.contract_status !== 'verificado') buttons.push(`<button class="ghost" data-contract="verified" data-id="${agency.id}">Aprobar contrato y generar acceso</button>`);
   buttons.push(`<button class="ghost" data-contract="rejected" data-id="${agency.id}">Rechazar contrato</button>`);
   buttons.push(`<button class="ghost danger" data-delete-agency="${agency.id}" data-name="${esc(agency.commercial_name)}">Borrar</button>`);
   return `<div class="actions">${buttons.join('')}</div>`;

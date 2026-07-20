@@ -629,34 +629,8 @@ async function adminApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/agencies\/[^/]+\/invite$/)) {
-      const agencyId = url.pathname.split('/')[4];
-      const agencies = await supa('agencies', { query: { id: `eq.${agencyId}`, limit: '1' } });
-      const agency = agencies[0];
-      const users = await supa('agency_users', { query: { agency_id: `eq.${agencyId}`, role: 'eq.principal', limit: '1' } });
-      const user = users[0];
-      if (!user) return json(res, 404, { error: 'Usuario principal no encontrado' });
-    const token = randomBytes(32).toString('base64url');
-    await supa('agency_users', {
-      method: 'PATCH',
-      query: { id: `eq.${user.id}` },
-      body: { invitation_token_hash: sha256(token), invited_at: new Date().toISOString(), invitation_expires_at: new Date(Date.now() + 7 * 86400000).toISOString() }
-    });
-    await audit(session, 'agency_invitation_created', 'agencies', agencyId);
-    const invitationUrl = `${process.env.PUBLIC_BASE_URL || ''}/crear-contrasena?token=${encodeURIComponent(token)}`;
-    const message = agencyInvitationMessage({ agency, user, invitationUrl });
-    await supa('notifications', {
-      method: 'POST',
-      body: [{
-        agency_id: agencyId,
-        user_id: user.id,
-        channel: 'email',
-        template_key: 'agency_invitation',
-        subject: message.subject,
-        body: message.body,
-        status: 'pendiente'
-      }]
-    });
-    return json(res, 200, { invitationUrl, message });
+    const agencyId = url.pathname.split('/')[4];
+    return json(res, 200, await createAgencyInvitation(session, agencyId));
   }
 
   if (req.method === 'DELETE' && url.pathname.match(/^\/api\/admin\/agencies\/[^/]+$/)) {
@@ -733,6 +707,7 @@ async function adminApi(req, res, url) {
     } else if (action === 'verified') {
       patch.contract_declared_signed = true;
       patch.contract_status = 'verificado';
+      patch.access_status = 'invitacion_pendiente';
       patch.contract_verified_at = now;
       patch.contract_verified_by = session.email;
       patch.contract_rejected_at = null;
@@ -754,6 +729,11 @@ async function adminApi(req, res, url) {
     }))[0];
     if (!agency) return json(res, 404, { error: 'Agencia no encontrada' });
     await audit(session, 'agency_contract_updated', 'agencies', agencyId, patch);
+    if (action === 'verified') {
+      await supa('agency_users', { method: 'PATCH', query: { agency_id: `eq.${agencyId}` }, body: { is_active: true } });
+      const invitation = await createAgencyInvitation(session, agencyId);
+      return json(res, 200, { agency, ...invitation });
+    }
     return json(res, 200, { agency });
   }
 
@@ -803,11 +783,12 @@ async function adminApi(req, res, url) {
 
   if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/agencies\/[^/]+\/collaborator$/)) {
     const agencyId = url.pathname.split('/')[4];
-    const agency = (await supa('agencies', { method: 'PATCH', query: { id: `eq.${agencyId}`, deleted_at: 'is.null' }, body: { contract_status: 'verificado', access_status: 'activa', contract_verified_at: new Date().toISOString() } }))[0];
+    const agency = (await supa('agencies', { method: 'PATCH', query: { id: `eq.${agencyId}`, deleted_at: 'is.null' }, body: { contract_status: 'verificado', access_status: 'invitacion_pendiente', contract_verified_at: new Date().toISOString(), contract_verified_by: session.email } }))[0];
     if (!agency) return json(res, 404, { error: 'Agencia no encontrada' });
     await supa('agency_users', { method: 'PATCH', query: { agency_id: `eq.${agencyId}` }, body: { is_active: true } });
     await audit(session, 'agency_approved_collaborator', 'agencies', agencyId);
-    return json(res, 200, { agency });
+    const invitation = await createAgencyInvitation(session, agencyId);
+    return json(res, 200, { agency, ...invitation });
   }
   if (req.method === 'GET' && url.pathname === '/api/admin/departures') {
     return json(res, 200, { departures: await supa('departures', { query: { select: '*', order: 'starts_at.asc' } }) });
@@ -2072,6 +2053,38 @@ function normalizeTraveller(input) {
     photo_consent: input.photoConsent === undefined ? null : Boolean(input.photoConsent),
     observations: input.observations || null
   };
+}
+
+async function createAgencyInvitation(session, agencyId) {
+  const agency = (await supa('agencies', { query: { id: `eq.${agencyId}`, deleted_at: 'is.null', limit: '1' } }))[0];
+  if (!agency) throw new Error('Agencia no encontrada');
+  const user = (await supa('agency_users', { query: { agency_id: `eq.${agencyId}`, role: 'eq.principal', limit: '1' } }))[0];
+  if (!user) throw new Error('Usuario principal no encontrado');
+
+  const baseUrl = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
+  if (!baseUrl) throw new Error('Falta configurar PUBLIC_BASE_URL para generar el enlace de acceso');
+  const token = randomBytes(32).toString('base64url');
+  const now = new Date();
+  await supa('agency_users', {
+    method: 'PATCH',
+    query: { id: `eq.${user.id}` },
+    body: {
+      is_active: true,
+      invitation_token_hash: sha256(token),
+      invited_at: now.toISOString(),
+      invitation_expires_at: new Date(now.getTime() + 7 * 86400000).toISOString()
+    }
+  });
+  await supa('agencies', { method: 'PATCH', query: { id: `eq.${agencyId}` }, body: { access_status: 'invitacion_pendiente' } });
+
+  const invitationUrl = `${baseUrl}/crear-contrasena?token=${encodeURIComponent(token)}`;
+  const message = agencyInvitationMessage({ agency, user, invitationUrl });
+  await supa('notifications', {
+    method: 'POST',
+    body: [{ agency_id: agencyId, user_id: user.id, channel: 'email', template_key: 'agency_invitation', subject: message.subject, body: message.body, status: 'pendiente' }]
+  });
+  await audit(session, 'agency_invitation_created', 'agencies', agencyId, { expires_at: new Date(now.getTime() + 7 * 86400000).toISOString() });
+  return { invitationUrl, message };
 }
 
 function agencyInvitationMessage({ agency, user, invitationUrl }) {
