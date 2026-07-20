@@ -69,20 +69,14 @@ function renderPublicAgencyRequest() {
     <section class="public-agency">
       <section class="panel public-hero">
         <p class="eyebrow">Agencias colaboradoras</p>
-        <h1>Viajes en grupo desde tu zona, con una operativa clara para agencias</h1>
-        <p class="muted">PROYEKTA crea y publica salidas desde distintos puntos de origen. Cada salida tiene sus propias fechas, alojamiento, actividades, plazas y precio, por lo que el catalogo puede crecer y cambiar sin limitarse a dos provincias ni a un unico programa.</p>
+        <h1>Colabora con PROYEKTA VIAJES en Ribeira Sacra</h1>
+        <p class="muted">Deja tus datos para recibir la documentacion comercial. Despues podras descargar el dossier y el contrato de colaboracion. El acceso operativo al portal solo se entrega cuando PROYEKTA valida el contrato.</p>
         <div class="actions">
           <a class="ghost button-light" href="/acceso">Ya tengo acceso como agencia</a>
         </div>
       </section>
-      <section class="public-benefits" aria-label="Como funciona el catalogo">
-        <article class="card"><p class="eyebrow">Catalogo vivo</p><h2>Nuevos origenes cuando hagan falta</h2><p class="muted">Los primeros origenes son solo el comienzo. Se pueden incorporar nuevas provincias y comunidades sin rehacer la pagina.</p></article>
-        <article class="card"><p class="eyebrow">Programa propio</p><h2>Cada salida, con su ficha</h2><p class="muted">Destino, hotel, itinerario, actividades, fechas, plazas y condiciones pueden variar segun el origen.</p></article>
-        <article class="card"><p class="eyebrow">Informacion actual</p><h2>Solo se publica lo disponible</h2><p class="muted">Las agencias consultan en su portal las salidas vigentes y sus precios actuales, sin depender de textos fijos en la landing.</p></article>
-      </section>
       <form class="panel form-grid" id="publicAgencyLead">
-        <h2 class="full">Solicita acceso para tu agencia</h2>
-        <p class="full muted">Indicanos donde trabajas y te enviaremos la documentacion de colaboracion. Tras validar el contrato podras consultar el catalogo vigente y solicitar reservas.</p>
+        <h2 class="full">Solicitar informacion y documentacion</h2>
         ${publicInput('agencyName','Nombre de la agencia')}
         ${publicInput('contactName','Persona de contacto')}
         ${publicInput('email','Email','email')}
@@ -952,24 +946,19 @@ function agencyForm() {
 
 function departureForm() {
   return `<form id="createDeparture" class="form-grid">
-    ${input('departureCode','Codigo salida','','PV-2027-ORIGEN-001')}
-    ${input('tripName','Nombre comercial del viaje','','Escapada cultural')}
-    ${input('destination','Destino','','Destino o zona del viaje')}
-    ${input('originName','Lugar de salida','','Ciudad / provincia / comunidad')}
-    ${input('originCode','Codigo origen','','COD')}
-    ${input('accommodationName','Alojamiento principal','','Hotel o alojamientos previstos')}
+    ${input('departureCode','CÃ³digo salida','','PV-2027-ORIGEN-001')}
+    ${input('tripName','Viaje','','Ribeira Sacra Premium')}
+    ${input('originName','Origen','','Madrid / Pais Vasco / nuevo origen')}
+    ${input('originCode','CÃ³digo origen','','MAD')}
     ${input('startsAt','Inicio','date')}
     ${input('endsAt','Fin','date')}
-    ${input('pricePerTraveller','PVP por viajero','number','','1')}
-    ${input('depositAmount','Deposito','number','','1')}
+    ${input('pricePerTraveller','PVP por viajero','number','1149','1')}
+    ${input('depositAmount','DepÃ³sito','number','300','1')}
     ${input('totalPlaces','Plazas','number','40','1')}
-    ${input('minimumParticipants','Minimo participantes','number','25','1')}
+    ${input('minimumParticipants','MÃ­nimo participantes','number','25','1')}
     <label>Estado<select name="status"><option value="borrador">Borrador</option><option value="disponible">Disponible</option><option value="confirmada">Confirmada</option></select></label>
     <label><input name="visibleToAgencies" type="checkbox"> Visible para agencias</label>
-    <label class="full">Resumen del itinerario<textarea name="itinerarySummary" placeholder="Programa previsto por dias o resumen del recorrido"></textarea></label>
-    <label class="full">Actividades incluidas<textarea name="activitiesSummary" placeholder="Visitas, experiencias y servicios incluidos"></textarea></label>
-    <label class="full">Cancelacion<textarea name="cancellationTerms"></textarea></label>
-    <label class="full">Notas internas<textarea name="internalNotes"></textarea></label>
+    <label class="full">CancelaciÃ³n<textarea name="cancellationTerms"></textarea></label>
     <button class="full">Crear salida</button>
   </form>`;
 }
@@ -1517,7 +1506,7 @@ async function restoreSelectedBackup() {
 
 function reservationForm(departures) {
   if (!departures.length) {
-    return `<div class="notice">AÃºn no hay fechas visibles para agencias. Cuando administracion publique una nueva fecha u origen aparecera aqui automaticamente.</div>`;
+    return `<div class="notice">AÃºn no hay fechas visibles para agencias. Entra como administrador y carga o publica las salidas de Madrid y PaÃ­s Vasco.</div>`;
   }
   return `<form id="createReservation" class="panel form-grid">
     <label class="full">Fecha y lugar de salida<select name="departureId" required>${departures.map(d => `<option value="${d.id}">${esc(departureLabel(d))}</option>`).join('')}</select></label>
@@ -1623,7 +1612,7 @@ function table(headers, rows) {
 }
 
 function departuresTable(rows) {
-  return table(['Codigo','Viaje','Origen','Alojamiento','Fechas','PVP','Deposito','Estado'], rows.map(d => [d.departure_code, d.trip_name, d.origin_name || d.origin_code, d.accommodation_name || 'Por confirmar', formatDateRange(d.starts_at, d.ends_at), money(d.price_per_traveller), money(d.deposit_amount), badge(d.status)]));
+  return table(['CÃ³digo','Viaje','Salida','Fechas','PVP','DepÃ³sito','Estado'], rows.map(d => [d.departure_code, d.trip_name, d.origin_name || d.origin_code, formatDateRange(d.starts_at, d.ends_at), money(d.price_per_traveller), money(d.deposit_amount), badge(d.status)]));
 }
 
 function reservationsTable(rows) {

@@ -93,7 +93,7 @@ th { background: #f8faf8; color: #33413d; font-size: 13px; }
 
 @media (max-width: 860px) {
   .app { padding: 14px; }
-  .login-grid, .layout, .grid, .grid.two, .form-grid, .gestoria-metrics, .public-benefits { grid-template-columns: 1fr; }
+  .login-grid, .layout, .grid, .grid.two, .form-grid, .gestoria-metrics { grid-template-columns: 1fr; }
   .side { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .topbar { height: auto; min-height: 62px; gap: 10px; }
 }
@@ -116,9 +116,6 @@ th { background: #f8faf8; color: #33413d; font-size: 13px; }
 .public-hero { padding: 30px; }
 .public-hero h1 { font-size: clamp(28px, 4vw, 44px); line-height: 1.08; max-width: 760px; }
 .public-hero .muted { max-width: 760px; font-size: 17px; }
-.public-benefits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.public-benefits .card { display: grid; align-content: start; }
-.public-benefits h2 { min-height: 48px; }
 .eyebrow { margin: 0 0 8px; text-transform: uppercase; letter-spacing: .12em; color: var(--brand); font-weight: 800; font-size: 12px; }
 .check { display: flex; grid-template-columns: auto 1fr; align-items: start; gap: 10px; font-weight: 500; }
 .check input { width: auto; margin-top: 4px; }
