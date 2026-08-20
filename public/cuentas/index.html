@@ -10,6 +10,7 @@
   <title>PROYEKTA CUENTAS</title>
   <link rel="manifest" href="/cuentas/manifest.webmanifest">
   <link rel="stylesheet" href="/cuentas/styles.css">
+  <style>[hidden]{display:none!important}.attachment-box{margin-top:14px;padding:14px;border:1px solid #d9e0e8;border-radius:12px;background:#f8fafc}.attachment-box input{margin-top:8px}.attachment-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.attachment-actions button{padding:8px 12px}</style>
 </head>
 <body>
   <div id="lock" class="lock-screen">
@@ -81,7 +82,12 @@
       </section>
       <label>Factura / referencia<input id="invoice"></label>
       <label>Notas<textarea id="notes" rows="3"></textarea></label>
-      <p id="documentNote" class="document-note"></p>
+      <section class="attachment-box">
+        <label>Factura o justificante
+          <input id="attachmentFile" type="file" accept="application/pdf,image/*,.doc,.docx,.xls,.xlsx" capture="environment">
+        </label>
+        <div class="attachment-actions"><p id="documentNote" class="document-note"></p><button type="button" id="removeAttachment" class="danger" hidden>Quitar archivo</button></div>
+      </section>
       <div class="dialog-actions"><button type="button" id="deleteButton" class="danger" hidden>Eliminar</button><button type="button" id="cancelButton">Cancelar</button><button class="primary" value="save">Guardar</button></div>
     </form>
   </dialog>
