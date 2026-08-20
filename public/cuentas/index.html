@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#071936">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Cuentas">
+  <title>PROYEKTA CUENTAS</title>
+  <link rel="manifest" href="/cuentas/manifest.webmanifest">
+  <link rel="stylesheet" href="/cuentas/styles.css">
+</head>
+<body>
+  <div id="lock" class="lock-screen">
+    <section class="lock-card">
+      <div class="mark">PV</div>
+      <p class="eyebrow">PROYEKTA VIAJES</p>
+      <h1>CUENTAS</h1>
+      <p id="lockHelp">Crea un PIN de al menos 6 caracteres. Los datos quedarán cifrados en este dispositivo.</p>
+      <form id="unlockForm">
+        <label>PIN de acceso<input id="pin" type="password" inputmode="numeric" minlength="6" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">ABRIR CUENTAS</button>
+      </form>
+      <p id="lockError" class="error" role="alert"></p>
+    </section>
+  </div>
+
+  <div id="app" class="app" hidden>
+    <header>
+      <div><p class="eyebrow">PROYEKTA VIAJES</p><h1>CUENTAS</h1></div>
+      <button id="lockButton" class="ghost">Bloquear</button>
+    </header>
+    <main>
+      <section class="toolbar">
+        <button id="newButton" class="primary">+ NUEVO</button>
+        <button id="importButton">Importar Dropbox</button>
+        <button id="exportButton">Exportar copia</button>
+        <input id="importFile" type="file" accept="application/json,.json" hidden>
+      </section>
+      <p id="syncStatus" style="margin:-7px 0 18px;padding:10px 13px;border-left:4px solid #d2a44c;background:#fff8e8;color:#5f4a20;border-radius:6px;font-size:13px">Sincronización: todavía no se ha importado ni exportado una copia de Dropbox.</p>
+
+      <section class="metrics" aria-label="Resumen">
+        <article><span>Ingresos</span><strong id="income">0,00 €</strong></article>
+        <article><span>Gastos</span><strong id="expense">0,00 €</strong></article>
+        <article><span>Resultado</span><strong id="balance">0,00 €</strong></article>
+        <article><span>Pendiente</span><strong id="pending">0,00 €</strong></article>
+      </section>
+
+      <section class="filters">
+        <input id="search" type="search" placeholder="Buscar concepto, empresa o categoría">
+        <select id="typeFilter"><option value="">Todos</option><option>Gasto</option><option>Ingreso</option></select>
+        <input id="monthFilter" type="month">
+      </section>
+
+      <p id="empty" class="empty">Importa desde Dropbox el archivo <strong>proyekta_cuentas.json</strong> para comenzar.</p>
+      <section id="movementList" class="movement-list"></section>
+    </main>
+  </div>
+
+  <dialog id="movementDialog">
+    <form id="movementForm" method="dialog">
+      <div class="dialog-head"><h2 id="dialogTitle">Nuevo movimiento</h2><button type="button" id="closeDialog" class="icon">×</button></div>
+      <input id="movementId" type="hidden">
+      <div class="form-grid">
+        <label>Fecha<input id="date" type="date" required></label>
+        <label>Vencimiento / primera cuota<input id="due" type="date" required></label>
+        <label>Tipo<select id="type"><option>Gasto</option><option>Ingreso</option></select></label>
+        <label>Concepto<input id="concept" required></label>
+        <label>Empresa / persona<input id="party" required></label>
+        <label>Categoría<input id="category"></label>
+        <label>Importe total<input id="amount" type="number" inputmode="decimal" min="0.01" step="0.01" required></label>
+        <label>Forma de pago<select id="method"><option>Tarjeta</option><option>Transferencia</option><option>Efectivo</option><option>Domiciliacion</option><option>Pago a plazos</option><option>Otro</option></select></label>
+        <label id="paidWrap">Ya cobrado / pagado<input id="paidAmount" type="number" inputmode="decimal" min="0" step="0.01" value="0"></label>
+        <label>IVA %<input id="vat" type="number" inputmode="decimal" min="0" step="0.01" value="21"></label>
+      </div>
+      <section id="installmentFields" class="installments" hidden>
+        <label>Número de cuotas<input id="installmentCount" type="number" inputmode="numeric" min="2" max="120" value="2"></label>
+        <label>Cuotas pagadas<input id="installmentsPaid" type="number" inputmode="numeric" min="0" value="0"></label>
+        <strong id="installmentSummary">Cuota mensual: 0,00 €</strong>
+      </section>
+      <label>Factura / referencia<input id="invoice"></label>
+      <label>Notas<textarea id="notes" rows="3"></textarea></label>
+      <p id="documentNote" class="document-note"></p>
+      <div class="dialog-actions"><button type="button" id="deleteButton" class="danger" hidden>Eliminar</button><button type="button" id="cancelButton">Cancelar</button><button class="primary" value="save">Guardar</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="/cuentas/app.js"></script>
+</body>
+</html>

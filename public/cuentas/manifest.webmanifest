@@ -1,0 +1,1 @@
+{"name":"PROYEKTA CUENTAS","short_name":"Cuentas","description":"Gestión portátil y cifrada de cuentas de PROYEKTA VIAJES","start_url":"/cuentas/index.html","scope":"/cuentas/","display":"standalone","background_color":"#f4f6f5","theme_color":"#071936","icons":[{"src":"/cuentas/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
