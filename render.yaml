@@ -3,7 +3,7 @@ services:
     name: proyekta-portal-agencias
     runtime: node
     plan: starter
-    buildCommand: ""
+    buildCommand: npm install --omit=dev
     startCommand: node src/server.mjs
     envVars:
       - key: NODE_ENV
