@@ -1708,6 +1708,7 @@ async function agencyApi(req, res, url) {
 async function serveStatic(req, res, url) {
   let pathname = decodeURIComponent(url.pathname);
   if (pathname === '/') pathname = '/index.html';
+  if (pathname === '/cuentas' || pathname === '/cuentas/') pathname = '/cuentas/index.html';
   const baseDir = pathname.startsWith('/generated/') ? root : publicDir;
   const target = normalize(join(baseDir, pathname));
   if (!target.startsWith(baseDir)) return json(res, 403, { error: 'Prohibido' });
