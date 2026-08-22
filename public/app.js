@@ -310,10 +310,10 @@ async function adminView(view) {
       document.querySelector('#newAccountingDoc').onclick = () => document.querySelector('#accountingForm').classList.toggle('hidden');
       document.querySelector('#newEntity').onclick = () => document.querySelector('#entityForm').classList.toggle('hidden');
       document.querySelector('#printGestoria').onclick = () => window.print();
+      document.querySelector('#newOperatingCost').onclick = () => document.querySelector('#operatingCostForm').classList.toggle('hidden');
       document.querySelector('#createAccountingDoc')?.addEventListener('submit', createAccountingDocument);
       document.querySelector('#createControlEntity')?.addEventListener('submit', createControlEntity);
-      document.querySelector('#operationCalculator')?.addEventListener('input', updateOperationCalculator);
-      updateOperationCalculator();
+      document.querySelector('#createOperatingCost')?.addEventListener('submit', createOperatingCost);
       target.querySelectorAll('[data-gestoria-tab]').forEach(btn => btn.onclick = () => showGestoriaTab(btn.dataset.gestoriaTab));
       target.querySelectorAll('[data-accounting-paid]').forEach(btn => btn.onclick = async () => {
         if (!confirm('Marcar como cobrado/pagado?')) return;
@@ -323,8 +323,8 @@ async function adminView(view) {
       target.querySelectorAll('[data-accounting-upload]').forEach(btn => btn.onclick = () => uploadAccountingFile(btn.dataset.accountingUpload));
     } catch (err) {
       target.innerHTML = html`
-        <h2>Gestoria</h2>
-        <div class="notice">Esta parte necesita activar la base de datos de control economico. Falta ejecutar <strong>db/004_proyekta_control_core.sql</strong> en Supabase.</div>
+        <h2>Control económico</h2>
+        <div class="notice">Esta parte necesita activar la base de datos económica. Ejecuta <strong>db/004_proyekta_control_core.sql</strong> y <strong>db/008_control_economico_automatico.sql</strong> en Supabase.</div>
         <p class="muted">${esc(err.message)}</p>
       `;
     }
@@ -920,6 +920,12 @@ async function createTraveller(e) {
   agencyView('agencyTravellers');
 }
 
+async function createOperatingCost(e) {
+  e.preventDefault();
+  await api('/api/admin/economics/operating-costs', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
+  alert('Coste de la salida registrado. Los márgenes se han recalculado automáticamente.');
+  adminView('adminGestoria');
+}
 async function createPayment(e) {
   e.preventDefault();
   await api('/api/agency/payments', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
@@ -1008,39 +1014,43 @@ function accountingDocumentForm() {
 function gestoriaDashboard(data) {
   const model = buildGestoriaModel(data);
   return html`
-    <div class="toolbar"><h2>Gestoria</h2><div class="actions"><button id="printGestoria">Imprimir</button><button id="newAccountingDoc">Nuevo ingreso/gasto</button><button class="ghost" id="newEntity">Nueva entidad</button></div></div>
+    <div class="toolbar"><h2>Control económico</h2><div class="actions"><button id="printGestoria">Imprimir</button><button id="newOperatingCost">Añadir coste de excursión</button><button id="newAccountingDoc">Nuevo ingreso/gasto</button><button class="ghost" id="newEntity">Nueva entidad</button></div></div>
     <div class="grid gestoria-metrics">
-      ${metric('Cobrado real', money(model.totalCollected))}
-      ${metric('Pendiente de cobrar', money(model.totalToCollect))}
-      ${metric('Gastos registrados', money(model.totalExpense))}
-      ${metric('Pendiente de pagar', money(model.totalToPay))}
-      ${metric('Compras previstas', money(model.totalPlanned))}
-      ${metric('Saldo caja/banco', money(model.cashBalance))}
+      ${metric('Ventas activas', money(model.economics.summary.sales))}
+      ${metric('Cobrado reservas', money(model.economics.summary.collected))}
+      ${metric('Pendiente clientes', money(model.economics.summary.pendingCustomer))}
+      ${metric('Comisiones devengadas', money(model.economics.summary.earnedCommission))}
+      ${metric('Costes operativos', money(model.economics.summary.operatingExpenses))}
+      ${metric('Margen sobre cobrado', money(model.economics.summary.marginCollected))}
     </div>
     <div id="accountingForm" class="panel hidden">${accountingDocumentForm()}</div>
+    <div class="notice"><strong>Novas Rutas:</strong> ${money(model.economics.novasRutas.ratePerTraveller)} por persona confirmada (${money(model.economics.summary.novasTravellerService)} acumulado), más ${money(model.economics.summary.excursionCosts)} de excursiones registradas.</div>
     <div id="entityForm" class="panel hidden">${controlEntityForm(data.categories || [])}</div>
     <div class="gestoria-tabs">
+    <div id="operatingCostForm" class="panel hidden">${operatingCostForm(data)}</div>
       ${gestoriaTabButton('resumen', 'Resumen', true)}
-      ${gestoriaTabButton('operacion', 'Calculadora operacion')}
+      ${gestoriaTabButton('agencias', 'Agencias y comisiones')}
+      ${gestoriaTabButton('salidas', 'Rentabilidad por salida')}
+      ${gestoriaTabButton('reservas', 'Reservas y viajeros')}
+      ${gestoriaTabButton('costes', 'Costes de excursiones')}
       ${gestoriaTabButton('cobros', 'Cobros')}
       ${gestoriaTabButton('pagos', 'Pagos')}
       ${gestoriaTabButton('emitidas', 'Facturas emitidas')}
       ${gestoriaTabButton('recibidas', 'Facturas recibidas / tickets')}
-      ${gestoriaTabButton('compras', 'Compras previstas')}
       ${gestoriaTabButton('proveedores', 'Proveedores')}
-      ${gestoriaTabButton('liquidaciones', 'Liquidaciones agencias')}
       ${gestoriaTabButton('caja', 'Caja y bancos')}
       ${gestoriaTabButton('informes', 'Informes')}
     </div>
     <section class="gestoria-section" data-gestoria-section="resumen">${gestoriaResumen(model)}</section>
-    <section class="gestoria-section hidden" data-gestoria-section="operacion">${gestoriaOperacion(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="agencias">${gestoriaLiquidaciones(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="salidas">${gestoriaSalidas(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="reservas">${gestoriaReservasEconomicas(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="costes">${gestoriaCostes(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="cobros">${gestoriaCobros(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="pagos">${gestoriaPagos(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="emitidas">${gestoriaFacturasEmitidas(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="recibidas">${gestoriaFacturasRecibidas(model)}</section>
-    <section class="gestoria-section hidden" data-gestoria-section="compras">${gestoriaCompras(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="proveedores">${gestoriaProveedores(model)}</section>
-    <section class="gestoria-section hidden" data-gestoria-section="liquidaciones">${gestoriaLiquidaciones(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="caja">${gestoriaCaja(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="informes">${gestoriaInformes(model)}</section>
   `;
@@ -1057,21 +1067,12 @@ function showGestoriaTab(id) {
 
 function buildGestoriaModel(data) {
   const documents = data.documents || [];
+  const economics = data.economics || { summary: {}, reservations: [], agencies: [], departures: [], operatingCosts: [], novasRutas: { ratePerTraveller: 20 } };
   const realDocs = documents.filter(d => !['presupuesto', 'proforma'].includes(d.document_type) && !['borrador', 'cancelada'].includes(d.status));
   const incomeDocs = realDocs.filter(d => d.direction === 'ingreso');
   const expenseDocs = realDocs.filter(d => d.direction === 'gasto');
   const issuedDocs = documents.filter(d => d.direction === 'ingreso');
   const receivedDocs = documents.filter(d => d.direction === 'gasto');
-  const plannedDocs = documents.filter(d => d.document_type === 'presupuesto' || String(d.concept || '').startsWith('COMPRA PREVISTA'));
-  const purchases = (data.plannedPurchases || []).length ? (data.plannedPurchases || []) : plannedDocs.map(d => ({
-    item_name: String(d.concept || '').replace(/^COMPRA PREVISTA - /, ''),
-    quantity: 1,
-    estimated_unit_price: d.total_amount,
-    status: d.status,
-    priority: '',
-    pc_expense_categories: { name: 'Importado' },
-    pc_entities: { display_name: d.entities?.display_name || '' }
-  }));
   const payments = data.payments || [];
   const reservations = data.reservations || [];
   const dueItems = data.dueItems || [];
@@ -1087,38 +1088,68 @@ function buildGestoriaModel(data) {
   const totalPaidExpense = expenseDocs.reduce((s, d) => s + Number(d.paid_amount || 0), 0);
   const totalToPay = dueItems.filter(d => d.direction === 'pagar').reduce((s, d) => s + Math.max(0, Number(d.amount || 0) - Number(d.paid_amount || 0)), 0)
     + expenseDocs.reduce((s, d) => s + Math.max(0, Number(d.total_amount || 0) - Number(d.paid_amount || 0)), 0);
-  const totalPlanned = purchases.filter(p => !['comprado', 'cancelado', 'descartado'].includes(p.status)).reduce((s, p) => s + Number(p.estimated_unit_price || 0) * Number(p.quantity || 0), 0);
   const cashIn = cashMovements.filter(m => m.direction === 'entrada' && ['confirmado', 'conciliado'].includes(m.status)).reduce((s, m) => s + Number(m.amount || 0), 0);
   const cashOut = cashMovements.filter(m => m.direction === 'salida' && ['confirmado', 'conciliado'].includes(m.status)).reduce((s, m) => s + Number(m.amount || 0), 0);
   const cashBalance = Number(data.cash?.saldo_movimientos || 0) || cashIn - cashOut;
-  const agencyRows = agencies.map(agency => {
-    const agencyReservations = reservations.filter(r => r.agency_id === agency.id);
-    const sales = agencyReservations.reduce((s, r) => s + Number(r.total_amount || 0), 0);
-    const collected = agencyReservations.reduce((s, r) => s + Number(r.paid_amount || 0), 0);
-    const commissionRate = Number(agency.default_commission_rate || 0);
-    const commission = sales * commissionRate;
-    return { agency, agencyReservations, sales, collected, commissionRate, commission };
-  });
-  return { data, documents, realDocs, incomeDocs, expenseDocs, issuedDocs, receivedDocs, purchases, payments, reservations, dueItems, cashMovements, agencies, filesByDocument, totalCollected, totalReservationSales, totalReservationPaid, totalToCollect, totalExpense, totalPaidExpense, totalToPay, totalPlanned, cashBalance, cashIn, cashOut, agencyRows };
+  return { data, economics, documents, realDocs, incomeDocs, expenseDocs, issuedDocs, receivedDocs, payments, reservations, dueItems, cashMovements, agencies, filesByDocument, totalCollected, totalReservationSales, totalReservationPaid, totalToCollect, totalExpense, totalPaidExpense, totalToPay, cashBalance, cashIn, cashOut };
+}
+
+function operatingCostForm(data) {
+  const departures = data.departures || [];
+  const novas = (data.agencies || []).find(agency => String(agency.commercial_name || '').toLowerCase().includes('novas rutas'));
+  return `<form id="createOperatingCost" class="form-grid">
+    <h3 class="full">Añadir coste real de una salida</h3>
+    <label>Salida<select name="departureId" required><option value="">Seleccionar</option>${departures.map(departure => `<option value="${departure.id}">${esc(departure.departure_code)} · ${esc(departure.trip_name)}</option>`).join('')}</select></label>
+    <label>Proveedor<select name="supplierAgencyId"><option value="">Otro proveedor</option>${novas ? `<option value="${novas.id}" selected>Novas Rutas</option>` : ''}</select></label>
+    <label>Tipo<select name="costType"><option value="excursion">Excursión</option><option value="transporte">Transporte</option><option value="alojamiento">Alojamiento</option><option value="restauracion">Restauración</option><option value="servicio">Servicio</option><option value="otro">Otro</option></select></label>
+    <label>Estado<select name="status"><option value="confirmado">Confirmado / comprometido</option><option value="previsto">Previsto</option><option value="pagado">Pagado</option></select></label>
+    <label class="full">Concepto<input name="concept" placeholder="Ej.: excursiones Ribeira Sacra" required></label>
+    <label>Importe total<input name="amount" type="number" min="0.01" step="0.01" required></label>
+    <label class="full">Notas<textarea name="notes"></textarea></label>
+    <p class="full muted">Los 20 € por persona de Novas Rutas ya se calculan automáticamente. Aquí introduce únicamente excursiones u otros costes adicionales reales.</p>
+    <button class="full">Guardar coste y recalcular</button>
+  </form>`;
 }
 
 function gestoriaResumen(model) {
   return html`
+  const summary = model.economics.summary;
     <div class="grid two">
-      ${summaryCard('Ventas de reservas', money(model.totalReservationSales), `${money(model.totalReservationPaid)} cobrado en reservas`)}
-      ${summaryCard('Resultado operativo simple', money(model.totalCollected - model.totalExpense), 'Cobrado real menos gastos registrados')}
+      ${summaryCard('Actividad comercial', money(summary.sales), `${summary.reservations || 0} reservas · ${summary.confirmedTravellers || 0} personas · ${money(summary.collected)} cobrado`)}
+      ${summaryCard('Margen de caja operativo', money(summary.marginCollected), 'Cobrado menos comisiones devengadas, Novas Rutas y costes reales registrados')}
     </div>
     <h3>Alertas de gestion</h3>
     ${table(['Area','Situacion','Accion'], [
-      ['Cobros', money(model.totalToCollect), 'Revisar reservas pendientes y vencimientos'],
+      ['Cobros de reservas', money(summary.pendingCustomer), 'Revisar reservas pendientes y vencimientos'],
+      ['Fichas de viajeros', `${Math.max(0, Number(summary.confirmedTravellers || 0) - Number(summary.registeredTravellers || 0))} pendientes`, 'Completar las personas que faltan en cada reserva'],
+      ['Comisiones comerciales', money(summary.earnedCommission), 'Devengadas sobre importes efectivamente cobrados'],
+      ['Novas Rutas', money(summary.novasTravellerService), `${money(model.economics.novasRutas.ratePerTraveller)} por persona confirmada`],
+      ['Excursiones', money(summary.excursionCosts), 'Comprobar que todos los costes reales están asociados a una salida'],
       ['Pagos', money(model.totalToPay), 'Revisar facturas recibidas y pagos a proveedores'],
-      ['Compras previstas', money(model.totalPlanned), 'Decidir que comprar, aplazar o descartar'],
       ['Facturas adjuntas', `${Object.keys(model.filesByDocument).length} documentos con archivo`, 'Subir tickets/facturas que falten']
     ])}
   `;
 }
 
 function gestoriaOperacion(model) {
+function gestoriaSalidas(model) {
+  return html`<h3>Rentabilidad automática por salida</h3><p class="muted">Incluye reservas activas, número de personas, comisiones, 20 € por persona de Novas Rutas y costes reales registrados.</p>${table(['Salida','Reservas','Personas','Ventas','Cobrado','Pendiente','Comisión devengada','Novas 20 €/persona','Excursiones','Otros costes','Margen previsto','Margen sobre cobrado'], model.economics.departures.map(row => [
+    `${esc(row.departureCode)} · ${esc(row.tripName)}`, row.reservations, row.travellers, money(row.sales), money(row.collected), money(row.pendingCustomer), money(row.earnedCommission), money(row.novasTravellerService), money(row.excursionCosts), money(row.otherOperatingCosts), money(row.projectedMargin), money(row.marginCollected)
+  ]))}`;
+}
+
+function gestoriaReservasEconomicas(model) {
+  return html`<h3>Detalle económico por reserva</h3>${table(['Reserva','Agencia','Salida','Personas reservadas','Fichas creadas','Faltan fichas','Venta','Cobrado','Pendiente','Comisión prevista','Comisión devengada','Estado'], model.economics.reservations.map(row => [
+    row.reservationCode, row.agencyName, row.departureCode, row.reservedTravellers, row.registeredTravellers, row.missingTravellerRecords, money(row.sales), money(row.collected), money(row.pendingCustomer), money(row.projectedCommission), money(row.earnedCommission), badge(row.status)
+  ]))}`;
+}
+
+function gestoriaCostes(model) {
+  return html`<h3>Costes adicionales por salida</h3><div class="notice">El servicio fijo de Novas Rutas se calcula automáticamente y no debe repetirse aquí.</div>${table(['Salida','Proveedor','Tipo','Concepto','Importe','Estado','Notas'], model.economics.operatingCosts.map(cost => [
+    cost.departures?.departure_code || '', cost.agencies?.commercial_name || '', cost.cost_type, cost.concept, money(cost.amount), badge(cost.status), cost.notes || ''
+  ]))}`;
+}
+
   const defaultSale = Math.max(model.totalReservationSales || 0, 1149);
   const defaultCost = Math.max(model.totalExpense || 0, 0);
   const defaultPaid = Math.max(model.totalReservationPaid || 0, 0);
@@ -1224,22 +1255,6 @@ function gestoriaFacturasRecibidas(model) {
   `;
 }
 
-function gestoriaCompras(model) {
-  return html`
-    <h3>Compras previstas</h3>
-    ${table(['Articulo','Proveedor','Categoria','Cantidad','Precio unit.','Total previsto','Prioridad','Estado'], model.purchases.map(p => [
-      p.item_name || '',
-      p.pc_entities?.display_name || '',
-      p.pc_expense_categories?.name || '',
-      p.quantity || 0,
-      money(p.estimated_unit_price || 0),
-      money(Number(p.estimated_unit_price || 0) * Number(p.quantity || 0)),
-      p.priority || '',
-      badge(p.status)
-    ]))}
-  `;
-}
-
 function gestoriaProveedores(model) {
   const suppliers = (model.data.entities || []).filter(e => e.status !== 'inactiva');
   return html`
@@ -1250,15 +1265,10 @@ function gestoriaProveedores(model) {
 
 function gestoriaLiquidaciones(model) {
   return html`
-    <h3>Liquidaciones a agencias</h3>
-    ${table(['Agencia','Reservas','Ventas','Cobrado','Comision','Pendiente cliente','Estado acceso'], model.agencyRows.map(row => [
-      row.agency.commercial_name,
-      row.agencyReservations.length,
-      money(row.sales),
-      money(row.collected),
-      `${money(row.commission)} (${Math.round(row.commissionRate * 100)}%)`,
-      money(Math.max(0, row.sales - row.collected)),
-      badge(row.agency.access_status)
+    <h3>Agencias, ventas y comisiones</h3>
+    <p class="muted">La comisión prevista se calcula sobre la venta. La devengada se calcula solo sobre lo que PROYEKTA ya ha cobrado.</p>
+    ${table(['Agencia','Reservas','Personas','Ventas','Cobrado','Pendiente clientes','Comisión prevista','Comisión devengada','Comisión pagada','Pendiente liquidar'], model.economics.agencies.map(row => [
+      row.agencyName, row.reservations, row.travellers, money(row.sales), money(row.collected), money(row.pendingCustomer), money(row.projectedCommission), money(row.earnedCommission), money(row.paidCommission), money(row.pendingCommission)
     ]))}
   `;
 }
@@ -1292,7 +1302,10 @@ function gestoriaInformes(model) {
       ['Pendiente de cobrar', money(model.totalToCollect)],
       ['Gastos registrados', money(model.totalExpense)],
       ['Pendiente de pagar', money(model.totalToPay)],
-      ['Compras previstas', money(model.totalPlanned)],
+      ['Comisiones devengadas', money(model.economics.summary.earnedCommission)],
+      ['Coste Novas Rutas por personas', money(model.economics.summary.novasTravellerService)],
+      ['Costes de excursiones', money(model.economics.summary.excursionCosts)],
+      ['Margen sobre cobrado', money(model.economics.summary.marginCollected)],
       ['Saldo caja/banco', money(model.cashBalance)]
     ])}
   `;
