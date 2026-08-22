@@ -9,7 +9,7 @@ const api = async (url, options = {}) => {
     body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'No se ha podido completar la acciÃ³n');
+  if (!res.ok) throw new Error(data.error || 'No se ha podido completar la acción');
   return data;
 };
 
@@ -146,7 +146,7 @@ function renderSetPassword() {
     e.preventDefault();
     try {
       await api('/api/invitations/set-password', { method: 'POST', body: { token, password: new FormData(e.currentTarget).get('password') } });
-      alert('ContraseÃ±a creada. Ya puedes iniciar sesiÃ³n.');
+      alert('Contraseña creada. Ya puedes iniciar sesión.');
       history.replaceState(null, '', '/acceso');
       renderAgencyLoginOnly();
     } catch (err) { alert(err.message); }
@@ -245,8 +245,8 @@ async function adminView(view) {
     target.innerHTML = html`
       <div class="toolbar"><h2>Salidas</h2><button id="newDeparture">Nueva salida</button></div>
       <div id="departureForm" class="panel hidden">${departureForm()}</div>
-      ${table(['CÃ³digo','Viaje','Origen','Fechas','PVP','DepÃ³sito','Estado','Visible'], departures.map(d => [
-        d.departure_code, d.trip_name, d.origin_code, `${d.starts_at} - ${d.ends_at}`, money(d.price_per_traveller), money(d.deposit_amount), badge(d.status), d.visible_to_agencies ? 'SÃ­' : 'No'
+      ${table(['Código','Viaje','Origen','Fechas','PVP','Depósito','Estado','Visible'], departures.map(d => [
+        d.departure_code, d.trip_name, d.origin_code, `${d.starts_at} - ${d.ends_at}`, money(d.price_per_traveller), money(d.deposit_amount), badge(d.status), d.visible_to_agencies ? 'Sí' : 'No'
       ]))}
     `;
     document.querySelector('#newDeparture').onclick = () => document.querySelector('#departureForm').classList.toggle('hidden');
@@ -335,7 +335,7 @@ async function adminView(view) {
       const data = await api('/api/admin/control/summary');
       const totals = controlTotals(data.balances);
       target.innerHTML = html`
-        <div class="toolbar"><h2>AdministraciÃ³n y control econÃ³mico</h2><button id="newEntity">Nueva entidad</button></div>
+        <div class="toolbar"><h2>Administración y control económico</h2><button id="newEntity">Nueva entidad</button></div>
         <div class="grid">
           ${metric('Pendiente de cobrar', money(totals.toCollect))}
           ${metric('Pendiente de pagar', money(totals.toPay))}
@@ -343,8 +343,8 @@ async function adminView(view) {
         </div>
         <div id="entityForm" class="panel hidden">${controlEntityForm(data.categories)}</div>
         <h3>Entidades recientes</h3>
-        ${table(['Nombre','Email','TelÃ©fono','Estado'], data.entities.map(e => [e.display_name, e.main_email || '', e.main_phone || '', badge(e.status)]))}
-        <h3>Vencimientos prÃ³ximos</h3>
+        ${table(['Nombre','Email','Teléfono','Estado'], data.entities.map(e => [e.display_name, e.main_email || '', e.main_phone || '', badge(e.status)]))}
+        <h3>Vencimientos próximos</h3>
         ${table(['Entidad','Tipo','Fecha','Importe','Pagado','Estado'], data.dueItems.map(d => [d.entities?.display_name || '', d.direction, d.due_date, money(d.amount), money(d.paid_amount), badge(d.status)]))}
         <h3>Tareas abiertas</h3>
         ${table(['Tarea','Prioridad','Vence','Estado'], data.tasks.map(t => [t.title, t.priority, formatDateTime(t.due_at), badge(t.status)]))}
@@ -353,22 +353,22 @@ async function adminView(view) {
       document.querySelector('#createControlEntity')?.addEventListener('submit', createControlEntity);
     } catch (err) {
       target.innerHTML = html`
-        <h2>AdministraciÃ³n y control econÃ³mico</h2>
-        <div class="notice">Falta ejecutar la migraciÃ³n <strong>db/004_proyekta_control_core.sql</strong> en Supabase. DespuÃ©s aparecerÃ¡n entidades, categorÃ­as, vencimientos y tesorerÃ­a.</div>
+        <h2>Administración y control económico</h2>
+        <div class="notice">Falta ejecutar la migración <strong>db/004_proyekta_control_core.sql</strong> en Supabase. Después aparecerán entidades, categorías, vencimientos y tesorería.</div>
         <p class="muted">${esc(err.message)}</p>
       `;
     }
   }
   if (view === 'adminIncidents') {
     const { incidents } = await api('/api/admin/incidents');
-    target.innerHTML = html`<h2>Incidencias</h2>${table(['CÃ³digo','Agencia','CategorÃ­a','Prioridad','Estado','DescripciÃ³n'], incidents.map(i => [
+    target.innerHTML = html`<h2>Incidencias</h2>${table(['Código','Agencia','Categoría','Prioridad','Estado','Descripción'], incidents.map(i => [
       i.incident_code, i.agencies?.commercial_name, i.category, i.priority, badge(i.status), i.description
     ]))}`;
   }
   if (view === 'adminExports') {
     target.innerHTML = html`
       <h2>Exportar datos</h2>
-      <div class="notice">Descarga copias CSV cuando quieras. GuÃ¡rdalas en una carpeta privada; pueden contener datos personales.</div>
+      <div class="notice">Descarga copias CSV cuando quieras. Guárdalas en una carpeta privada; pueden contener datos personales.</div>
       <div class="grid two">
         ${exportCard('Agencias', 'agencies')}
         ${exportCard('Salidas', 'departures')}
@@ -383,11 +383,11 @@ async function adminView(view) {
 
 function showInvitation(data) {
   const text = `Asunto: ${data.message.subject}\n\n${data.message.body}`;
-  const ok = confirm('InvitaciÃ³n generada. Pulsa Aceptar para copiar el mensaje completo.');
+  const ok = confirm('Invitación generada. Pulsa Aceptar para copiar el mensaje completo.');
   if (ok && navigator.clipboard) {
-    navigator.clipboard.writeText(text).then(() => alert('Mensaje copiado. PÃ©galo en Gmail y envÃ­alo a la agencia.'));
+    navigator.clipboard.writeText(text).then(() => alert('Mensaje copiado. Pégalo en Gmail y envíalo a la agencia.'));
   } else {
-    prompt('Copia este mensaje y envÃ­alo a la agencia:', text);
+    prompt('Copia este mensaje y envíalo a la agencia:', text);
   }
 }
 
@@ -815,7 +815,7 @@ async function agencyView(view) {
         ${metric('Reservas', data.reservations.length)}
         ${metric('Pagos pendientes', data.payments.filter(p => p.status !== 'verificado').length)}
       </div>
-      <h3>PrÃ³ximas salidas</h3>
+      <h3>Próximas salidas</h3>
       ${departuresTable(data.departures)}
       <h3>Mis reservas</h3>
       ${reservationsTable(data.reservations)}
@@ -824,7 +824,7 @@ async function agencyView(view) {
   if (view === 'agencyNewReservation') {
     target.innerHTML = html`
       <h2>Nueva solicitud de reserva</h2>
-      <div class="notice">Esta solicitud no confirma plazas. La reserva quedarÃ¡ confirmada solo cuando PROYEKTA VIAJES lo comunique expresamente y se haya recibido el pago requerido.</div>
+      <div class="notice">Esta solicitud no confirma plazas. La reserva quedará confirmada solo cuando PROYEKTA VIAJES lo comunique expresamente y se haya recibido el pago requerido.</div>
       ${reservationForm(data.departures)}
     `;
     document.querySelector('#createReservation')?.addEventListener('submit', createReservation);
@@ -838,7 +838,7 @@ async function agencyView(view) {
     document.querySelector('#createPayment')?.addEventListener('submit', createPayment);
   }
   if (view === 'agencyIncidents') {
-    target.innerHTML = html`<h2>Nueva incidencia</h2>${incidentForm(data.reservations)}${table(['CÃ³digo','CategorÃ­a','Prioridad','Estado','DescripciÃ³n'], data.incidents.map(i => [i.incident_code, i.category, i.priority, badge(i.status), i.description]))}`;
+    target.innerHTML = html`<h2>Nueva incidencia</h2>${incidentForm(data.reservations)}${table(['Código','Categoría','Prioridad','Estado','Descripción'], data.incidents.map(i => [i.incident_code, i.category, i.priority, badge(i.status), i.description]))}`;
     document.querySelector('#createIncident')?.addEventListener('submit', createIncident);
   }
 }
@@ -930,7 +930,7 @@ async function createOperatingCost(e) {
 async function createPayment(e) {
   e.preventDefault();
   await api('/api/agency/payments', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
-  alert('Pago comunicado. PROYEKTA lo revisarÃ¡ y verificarÃ¡.');
+  alert('Pago comunicado. PROYEKTA lo revisará y verificará.');
   agencyView('agencyPayments');
 }
 
@@ -944,12 +944,12 @@ async function createIncident(e) {
 function agencyForm() {
   return `<form id="createAgency" class="form-grid">
     ${input('commercialName','Nombre comercial')}
-    ${input('legalName','RazÃ³n social')}
+    ${input('legalName','Razón social')}
     ${input('taxId','NIF/CIF')}
     ${input('mainEmail','Correo principal','email')}
-    ${input('mainPhone','TelÃ©fono')}
+    ${input('mainPhone','Teléfono')}
     ${input('representativeName','Representante')}
-    ${input('commissionRate','ComisiÃ³n','number','0.10','0.01')}
+    ${input('commissionRate','Comisión','number','0.10','0.01')}
     <p class="full muted">El contrato no se rellena aqui. La agencia lo envia desde la zona publica y en este panel solo se marca como recibido, verificado o rechazado.</p>
     <label class="full">Notas internas<textarea name="internalNotes"></textarea></label>
     <button class="full">Crear agencia</button>
@@ -958,19 +958,19 @@ function agencyForm() {
 
 function departureForm() {
   return `<form id="createDeparture" class="form-grid">
-    ${input('departureCode','CÃ³digo salida','','PV-2027-ORIGEN-001')}
+    ${input('departureCode','Código salida','','PV-2027-ORIGEN-001')}
     ${input('tripName','Viaje','','Ribeira Sacra Premium')}
     ${input('originName','Origen','','Madrid / Pais Vasco / nuevo origen')}
-    ${input('originCode','CÃ³digo origen','','MAD')}
+    ${input('originCode','Código origen','','MAD')}
     ${input('startsAt','Inicio','date')}
     ${input('endsAt','Fin','date')}
     ${input('pricePerTraveller','PVP por viajero','number','1149','1')}
-    ${input('depositAmount','DepÃ³sito','number','300','1')}
+    ${input('depositAmount','Depósito','number','300','1')}
     ${input('totalPlaces','Plazas','number','40','1')}
-    ${input('minimumParticipants','MÃ­nimo participantes','number','25','1')}
+    ${input('minimumParticipants','Mínimo participantes','number','25','1')}
     <label>Estado<select name="status"><option value="borrador">Borrador</option><option value="disponible">Disponible</option><option value="confirmada">Confirmada</option></select></label>
     <label><input name="visibleToAgencies" type="checkbox"> Visible para agencias</label>
-    <label class="full">CancelaciÃ³n<textarea name="cancellationTerms"></textarea></label>
+    <label class="full">Cancelación<textarea name="cancellationTerms"></textarea></label>
     <button class="full">Crear salida</button>
   </form>`;
 }
@@ -978,16 +978,16 @@ function departureForm() {
 function controlEntityForm(categories) {
   return `<form id="createControlEntity" class="form-grid">
     <label>Nombre visible<input name="displayName" required></label>
-    <label>RazÃ³n social<input name="legalName"></label>
+    <label>Razón social<input name="legalName"></label>
     <label>NIF/CIF<input name="taxId"></label>
     <label>Tipo<select name="entityKind"><option value="empresa">Empresa</option><option value="persona">Persona</option><option value="organismo">Organismo</option><option value="otro">Otro</option></select></label>
-    <label>CategorÃ­a<select name="categoryId"><option value="">Sin categorÃ­a inicial</option>${categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
+    <label>Categoría<select name="categoryId"><option value="">Sin categoría inicial</option>${categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
     <label>Email<input name="mainEmail" type="email"></label>
-    <label>TelÃ©fono<input name="mainPhone"></label>
+    <label>Teléfono<input name="mainPhone"></label>
     <label>Ciudad<input name="city"></label>
     <label>Provincia<input name="province"></label>
     <label>IBAN<input name="bankAccount"></label>
-    <label>DÃ­as de pago/cobro<input name="defaultPaymentTermsDays" type="number" value="0" step="1"></label>
+    <label>Días de pago/cobro<input name="defaultPaymentTermsDays" type="number" value="0" step="1"></label>
     <label>Estado<select name="status"><option value="activa">Activa</option><option value="potencial">Potencial</option><option value="bloqueada">Bloqueada</option><option value="inactiva">Inactiva</option></select></label>
     <label class="full">Notas<textarea name="notes"></textarea></label>
     <button class="full">Crear entidad</button>
@@ -1324,7 +1324,7 @@ function accountingExportPanel() {
   return `<div class="panel">
     <h3>Exportar trimestre para gestoria</h3>
     <form class="form-grid compact" onsubmit="event.preventDefault(); window.open('/api/admin/accounting/export?year=' + this.year.value + '&quarter=' + this.quarter.value, '_blank')">
-      <label>AÃ±o<input name="year" type="number" value="${year}" min="2026" step="1"></label>
+      <label>Año<input name="year" type="number" value="${year}" min="2026" step="1"></label>
       <label>Trimestre<select name="quarter"><option value="1" ${quarter === 1 ? 'selected' : ''}>T1</option><option value="2" ${quarter === 2 ? 'selected' : ''}>T2</option><option value="3" ${quarter === 3 ? 'selected' : ''}>T3</option><option value="4" ${quarter === 4 ? 'selected' : ''}>T4</option></select></label>
       <button>Descargar CSV</button>
     </form>
@@ -1527,16 +1527,16 @@ async function restoreSelectedBackup() {
 
 function reservationForm(departures) {
   if (!departures.length) {
-    return `<div class="notice">AÃºn no hay fechas visibles para agencias. Entra como administrador y carga o publica las salidas de Madrid y PaÃ­s Vasco.</div>`;
+    return `<div class="notice">Aún no hay fechas visibles para agencias. Entra como administrador y carga o publica las salidas de Madrid y País Vasco.</div>`;
   }
   return `<form id="createReservation" class="panel form-grid">
     <label class="full">Fecha y lugar de salida<select name="departureId" required>${departures.map(d => `<option value="${d.id}">${esc(departureLabel(d))}</option>`).join('')}</select></label>
-    ${input('requestedPlaces','NÃºmero de viajeros','number','2','1')}
+    ${input('requestedPlaces','Número de viajeros','number','2','1')}
     ${input('doubleRooms','Habitaciones dobles','number','1','1')}
     ${input('singleRooms','Habitaciones individuales','number','0','1')}
     ${input('tripleRooms','Habitaciones triples','number','0','1')}
     ${input('leadTravellerName','Viajero principal')}
-    ${input('leadTravellerPhone','TelÃ©fono principal')}
+    ${input('leadTravellerPhone','Teléfono principal')}
     ${input('leadTravellerEmail','Email principal','email')}
     <label class="full">Necesidades conocidas<textarea name="basicNeeds"></textarea></label>
     <label class="full">Observaciones<textarea name="observations"></textarea></label>
@@ -1550,10 +1550,10 @@ function travellerForm(reservations) {
     ${input('firstName','Nombre')}
     ${input('lastName1','Primer apellido')}
     ${input('lastName2','Segundo apellido')}
-    ${input('phone','TelÃ©fono')}
+    ${input('phone','Teléfono')}
     ${input('email','Email','email')}
     ${input('emergencyContactName','Contacto emergencia')}
-    ${input('emergencyContactPhone','TelÃ©fono emergencia')}
+    ${input('emergencyContactPhone','Teléfono emergencia')}
     <label>Alergias<textarea name="foodAllergies"></textarea></label>
     <label>Movilidad<textarea name="mobilityNeeds"></textarea></label>
     ${input('pickupPoint','Punto de recogida')}
@@ -1575,15 +1575,15 @@ function paymentForm(reservations) {
 function incidentForm(reservations) {
   return `<form id="createIncident" class="panel form-grid">
     ${reservationSelect(reservations, false)}
-    <label>CategorÃ­a<select name="category"><option>Pago</option><option>DocumentaciÃ³n</option><option>Alojamiento</option><option>Transporte</option><option>AlimentaciÃ³n</option><option>Movilidad</option><option>CancelaciÃ³n</option><option>Otra</option></select></label>
+    <label>Categoría<select name="category"><option>Pago</option><option>Documentación</option><option>Alojamiento</option><option>Transporte</option><option>Alimentación</option><option>Movilidad</option><option>Cancelación</option><option>Otra</option></select></label>
     <label>Prioridad<select name="priority"><option value="normal">Normal</option><option value="baja">Baja</option><option value="alta">Alta</option><option value="urgente">Urgente</option></select></label>
-    <label class="full">DescripciÃ³n<textarea name="description" required></textarea></label>
+    <label class="full">Descripción<textarea name="description" required></textarea></label>
     <button class="full">Registrar incidencia</button>
   </form>`;
 }
 
 function reservationSelect(reservations, required = true) {
-  return `<label class="full">Reserva<select name="reservationId" ${required ? 'required' : ''}><option value="">Selecciona</option>${reservations.map(r => `<option value="${r.id}">${esc(r.reservation_code)} Â· ${esc(r.departures?.origin_code || '')} Â· ${esc(formatDateRange(r.departures?.starts_at, null))}</option>`).join('')}</select></label>`;
+  return `<label class="full">Reserva<select name="reservationId" ${required ? 'required' : ''}><option value="">Selecciona</option>${reservations.map(r => `<option value="${r.id}">${esc(r.reservation_code)} · ${esc(r.departures?.origin_code || '')} · ${esc(formatDateRange(r.departures?.starts_at, null))}</option>`).join('')}</select></label>`;
 }
 
 function input(name, label, type = 'text', value = '', step = '') {
@@ -1625,19 +1625,19 @@ function formatDateRange(startsAt, endsAt) {
 }
 
 function departureLabel(d) {
-  return `${d.origin_name || d.origin_code} Â· ${formatDateRange(d.starts_at, d.ends_at)} Â· ${money(d.price_per_traveller)} Â· depÃ³sito ${money(d.deposit_amount)}`;
+  return `${d.origin_name || d.origin_code} · ${formatDateRange(d.starts_at, d.ends_at)} · ${money(d.price_per_traveller)} · depósito ${money(d.deposit_amount)}`;
 }
 
 function table(headers, rows) {
-  return `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${headers.length}" class="muted">Sin datos todavÃ­a.</td></tr>`}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${headers.length}" class="muted">Sin datos todavía.</td></tr>`}</tbody></table></div>`;
 }
 
 function departuresTable(rows) {
-  return table(['CÃ³digo','Viaje','Salida','Fechas','PVP','DepÃ³sito','Estado'], rows.map(d => [d.departure_code, d.trip_name, d.origin_name || d.origin_code, formatDateRange(d.starts_at, d.ends_at), money(d.price_per_traveller), money(d.deposit_amount), badge(d.status)]));
+  return table(['Código','Viaje','Salida','Fechas','PVP','Depósito','Estado'], rows.map(d => [d.departure_code, d.trip_name, d.origin_name || d.origin_code, formatDateRange(d.starts_at, d.ends_at), money(d.price_per_traveller), money(d.deposit_amount), badge(d.status)]));
 }
 
 function reservationsTable(rows) {
-  return table(['CÃ³digo','Salida','Fechas','Viajeros','Total','Pagado','Estado'], rows.map(r => [r.reservation_code, r.departures?.origin_name || r.departures?.origin_code || '', formatDateRange(r.departures?.starts_at, r.departures?.ends_at), r.requested_places, money(r.total_amount), money(r.paid_amount), badge(r.status)]));
+  return table(['Código','Salida','Fechas','Viajeros','Total','Pagado','Estado'], rows.map(r => [r.reservation_code, r.departures?.origin_name || r.departures?.origin_code || '', formatDateRange(r.departures?.starts_at, r.departures?.ends_at), r.requested_places, money(r.total_amount), money(r.paid_amount), badge(r.status)]));
 }
 
 logoutBtn.addEventListener('click', async () => {

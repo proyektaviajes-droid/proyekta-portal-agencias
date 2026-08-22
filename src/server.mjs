@@ -353,9 +353,9 @@ async function api(req, res, url) {
       return json(res, 200, { ok: true });
     }
 
-    if (url.pathname.startsWith('/api/admin/')) return adminApi(req, res, url);
-    if (url.pathname.startsWith('/api/agency/')) return agencyApi(req, res, url);
-    if (url.pathname.startsWith('/api/contracts/')) return contractsApi(req, res, url);
+    if (url.pathname.startsWith('/api/admin/')) return await adminApi(req, res, url);
+    if (url.pathname.startsWith('/api/agency/')) return await agencyApi(req, res, url);
+    if (url.pathname.startsWith('/api/contracts/')) return await contractsApi(req, res, url);
     return json(res, 404, { error: 'Ruta no encontrada' });
   } catch (error) {
     console.error(error);
@@ -1103,6 +1103,9 @@ async function adminApi(req, res, url) {
     const id = url.pathname.split('/')[4];
     const current = (await supa('payments', { query: { id: `eq.${id}`, limit: '1' } }))[0];
     if (!current) return json(res, 404, { error: 'Pago no encontrado' });
+    // Las devoluciones conservan su historial, pero dejan de apuntar al movimiento
+    // antes de borrarlo para respetar la integridad referencial de Supabase.
+    await optionalSupa('refunds', { method: 'PATCH', query: { payment_id: `eq.${id}` }, body: { payment_id: null } }, []);
     await supa('payments', { method: 'DELETE', query: { id: `eq.${id}` } });
     const reservation = current.reservation_id ? await updateReservationPaidAmount(current.reservation_id) : null;
     await audit(session, 'payment_deleted', 'payments', id, { reservation_id: current.reservation_id || null });
@@ -1115,13 +1118,13 @@ async function adminApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/admin/control/summary') {
     try {
       const [entities, categories, balances, cash, dueItems, tasks, documents, legacyExpenses, accountingFiles, agencies, departures, reservations, travellers, payments, cashMovements, economicRules, operatingCosts, commissions] = await Promise.all([
-        supa('entities', { query: { select: 'id,display_name,legal_name,tax_id,main_email,main_phone,status,created_at', order: 'created_at.desc', deleted_at: 'is.null', limit: '12' } }),
-        supa('entity_categories', { query: { select: '*', order: 'name.asc' } }),
-        supa('v_control_entity_balances', { query: { select: '*' } }),
-        supa('v_control_cash_position', { query: { select: '*' } }),
-        supa('due_items', { query: { select: '*,entities(display_name)', order: 'due_date.asc', status: 'in.(pendiente,parcial,vencido)', limit: '200' } }),
-        supa('control_tasks', { query: { select: '*', order: 'due_at.asc', status: 'in.(pendiente,en_curso)', limit: '12' } }),
-        supa('economic_documents', { query: { select: '*,entities(display_name,tax_id)', order: 'issue_date.desc', limit: '200' } }),
+        optionalSupa('entities', { query: { select: 'id,display_name,legal_name,tax_id,main_email,main_phone,status,created_at', order: 'created_at.desc', deleted_at: 'is.null', limit: '12' } }),
+        optionalSupa('entity_categories', { query: { select: '*', order: 'name.asc' } }),
+        optionalSupa('v_control_entity_balances', { query: { select: '*' } }),
+        optionalSupa('v_control_cash_position', { query: { select: '*' } }),
+        optionalSupa('due_items', { query: { select: '*,entities(display_name)', order: 'due_date.asc', status: 'in.(pendiente,parcial,vencido)', limit: '200' } }),
+        optionalSupa('control_tasks', { query: { select: '*', order: 'due_at.asc', status: 'in.(pendiente,en_curso)', limit: '12' } }),
+        optionalSupa('economic_documents', { query: { select: '*,entities(display_name,tax_id)', order: 'issue_date.desc', limit: '200' } }),
         optionalSupa('pc_expenses', { query: { select: '*,pc_expense_categories(name),pc_entities(display_name)', order: 'expense_date.desc', limit: '200' } }),
         optionalSupa('documents', { query: { select: '*', document_type: 'eq.factura_gestoria', order: 'created_at.desc', limit: '500' } }),
         supa('agencies', { query: { select: 'id,agency_code,commercial_name,legal_name,default_commission_rate,access_status,contract_status,created_at', deleted_at: 'is.null', order: 'commercial_name.asc', limit: '500' } }),
