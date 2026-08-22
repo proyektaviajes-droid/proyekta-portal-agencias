@@ -534,7 +534,7 @@ async function adminApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/admin/agency-requests') {
     const [requests, leads] = await Promise.all([
       optionalSupa('control_agencies', { query: { select: '*', status: 'eq.lead', deleted_at: 'is.null', order: 'created_at.desc', limit: '200' } }),
-      optionalSupa('leads', { query: { select: '*', product_interest: 'eq.agencia_colaboradora', order: 'created_at.desc', limit: '200' } })
+      optionalSupa('leads', { query: { select: '*', product_interest: 'eq.agencia_colaboradora', status: 'neq.eliminada', order: 'created_at.desc', limit: '200' } })
     ]);
     return json(res, 200, { requests, leads });
   }
@@ -572,6 +572,9 @@ async function adminApi(req, res, url) {
     if (!existing) return json(res, 404, { error: 'Solicitud no encontrada' });
     const deletedAt = new Date().toISOString();
     await supa('control_agencies', { method: 'PATCH', query: { id: `eq.${requestId}` }, body: { status: 'descartada', deleted_at: deletedAt } });
+    if (existing.email) {
+      await optionalSupa('leads', { method: 'PATCH', query: { email: `eq.${existing.email}`, product_interest: 'eq.agencia_colaboradora' }, body: { status: 'eliminada', next_action: 'Eliminada de Solicitudes por PROYEKTA.' } }, []);
+    }
     await audit(session, 'agency_request_deleted', 'control_agencies', requestId, { deleted_at: deletedAt, previous_status: existing.status });
     return json(res, 200, { ok: true });
   }
@@ -638,6 +641,16 @@ async function adminApi(req, res, url) {
     await supa('lead_history', { method: 'POST', body: [{ lead_id: leadId, old_status: lead.status || null, new_status: patch.status, notes: note || patch.next_action, actor_type: 'admin' }] }).catch(() => {});
     await audit(session, `lead_${action}`, 'leads', leadId, patch);
     return json(res, 200, { lead: updated });
+  }
+
+  if (req.method === 'DELETE' && url.pathname.match(/^\/api\/admin\/leads\/[^/]+$/)) {
+    const leadId = url.pathname.split('/')[4];
+    const lead = (await supa('leads', { query: { id: `eq.${leadId}`, limit: '1' } }))[0];
+    if (!lead) return json(res, 404, { error: 'Solicitud no encontrada' });
+    const updated = (await supa('leads', { method: 'PATCH', query: { id: `eq.${leadId}` }, body: { status: 'eliminada', next_action: 'Eliminada de Solicitudes por PROYEKTA.' } }))[0];
+    await supa('lead_history', { method: 'POST', body: [{ lead_id: leadId, old_status: lead.status || null, new_status: 'eliminada', notes: 'Eliminada de la vista de Solicitudes.', actor_type: 'admin' }] }).catch(() => {});
+    await audit(session, 'lead_deleted', 'leads', leadId, { previous_status: lead.status || null });
+    return json(res, 200, { ok: true, lead: updated });
   }
 
   if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/leads\/[^/]+\/convert$/)) {

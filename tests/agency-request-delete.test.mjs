@@ -16,3 +16,9 @@ test('el servidor hace borrado lógico y conserva auditoría', () => {
   assert.match(server, /status: 'descartada', deleted_at: deletedAt/);
   assert.match(server, /agency_request_deleted/);
 });
+
+test('también se pueden borrar las solicitudes del historial comercial', () => {
+  assert.match(app, /data-lead-delete/);
+  assert.match(server, /status: 'neq\.eliminada'/);
+  assert.match(server, /lead_deleted/);
+});

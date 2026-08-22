@@ -618,6 +618,7 @@ function bindAdminRequestButtons(target) {
   target.querySelectorAll('[data-lead-contact]').forEach(btn => btn.onclick = () => markAgencyLeadContacted(btn.dataset.leadContact));
   target.querySelectorAll('[data-lead-convert]').forEach(btn => btn.onclick = () => convertAgencyLead(btn.dataset.leadConvert));
   target.querySelectorAll('[data-lead-reject]').forEach(btn => btn.onclick = () => rejectAgencyLead(btn.dataset.leadReject));
+  target.querySelectorAll('[data-lead-delete]').forEach(btn => btn.onclick = () => deleteAgencyLead(btn.dataset.leadDelete, btn.dataset.leadName));
   target.querySelectorAll('[data-view-agencies]').forEach(btn => btn.onclick = () => { document.querySelector('[data-view=\"adminAgencies\"]')?.click(); });
 }
 
@@ -625,18 +626,22 @@ function bindAdminRequestButtons(target) {
 function leadActions(lead) {
   const status = String(lead.status || '');
   const buttons = [`<button data-lead-open="${lead.id}">Abrir ficha</button>`];
+  const deleteButton = `<button class="ghost danger" data-lead-delete="${lead.id}" data-lead-name="${esc(lead.name)}">Borrar</button>`;
   if (status === 'convertida') {
     buttons.push(`<button class="ghost" data-view-agencies>Ver en Agencias</button>`);
+    buttons.push(deleteButton);
     return `<div class="actions">${buttons.join('')}</div>`;
   }
   if (status === 'rechazada') {
     buttons.push(`<button class="ghost" data-lead-copy="${lead.id}">Copiar respuesta</button>`);
+    buttons.push(deleteButton);
     return `<div class="actions">${buttons.join('')}</div>`;
   }
   buttons.push(`<button class="ghost" data-lead-copy="${lead.id}">Copiar respuesta</button>`);
   buttons.push(`<button class="ghost" data-lead-contact="${lead.id}">Marcar contactada</button>`);
   buttons.push(`<button class="ghost" data-lead-convert="${lead.id}">Aceptar / crear agencia</button>`);
   buttons.push(`<button class="ghost danger" data-lead-reject="${lead.id}">Rechazar</button>`);
+  buttons.push(deleteButton);
   return `<div class="actions">${buttons.join('')}</div>`;
 }
 
@@ -764,6 +769,16 @@ async function rejectAgencyLead(id) {
   if (reason === null) return;
   await api(`/api/admin/leads/${id}`, { method: 'PATCH', body: { action: 'rejected', note: reason } });
   adminView('adminRequests');
+}
+
+async function deleteAgencyLead(id, name) {
+  if (!confirm(`Borrar la solicitud de ${name || 'esta agencia'}? Desaparecerá del historial comercial, sin borrar ninguna agencia que ya se haya creado.`)) return;
+  try {
+    await api(`/api/admin/leads/${id}`, { method: 'DELETE' });
+    await adminView('adminRequests');
+  } catch (err) {
+    alert('No se pudo borrar la solicitud: ' + err.message);
+  }
 }
 
 async function convertAgencyLead(id) {
@@ -1662,6 +1677,4 @@ window.addEventListener('popstate', init);
 init().catch(err => {
   app.innerHTML = `<div class="panel"><h1>Error</h1><p class="danger">${esc(err.message)}</p></div>`;
 });
-
-
 
