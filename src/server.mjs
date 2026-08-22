@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import PDFDocument from 'pdfkit';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 const scrypt = promisify(scryptCb);
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -171,11 +171,22 @@ function binary(res, filename, mimeType, buffer) {
 }
 
 export async function buildReservationConfirmationPdf({ reservation, payments = [] }) {
-  const doc = new PDFDocument({ size: 'A4', margins: { top: 48, right: 52, bottom: 52, left: 52 }, info: { Title: `Confirmación ${reservation.reservation_code}`, Author: 'PROYEKTA VIAJES' } });
-  const chunks = [];
-  doc.on('data', chunk => chunks.push(chunk));
-  const completed = new Promise((resolve, reject) => { doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject); });
-  const navy = '#173563', gold = '#c49a52', ink = '#17212b', muted = '#667085', pale = '#f4f6f8';
+  const templatePath = join(root, 'assets', 'PROYEKTA_Membrete_Oficial_Vacio.png');
+  const pdf = await PDFDocument.create();
+  pdf.setTitle(`Confirmación ${reservation.reservation_code}`);
+  pdf.setAuthor('PROYEKTA VIAJES');
+  pdf.setSubject('Confirmación de reserva y pagos registrados');
+  const page = pdf.addPage([595.2756, 841.8898]);
+  const officialLetterhead = await pdf.embedPng(await readFile(templatePath));
+  page.drawImage(officialLetterhead, { x: 0, y: 0, width: 595.2756, height: 841.8898 });
+  const regular = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const navy = rgb(8 / 255, 41 / 255, 78 / 255);
+  const blueGrey = rgb(132 / 255, 158 / 255, 181 / 255);
+  const ink = rgb(31 / 255, 41 / 255, 55 / 255);
+  const muted = rgb(100 / 255, 116 / 255, 139 / 255);
+  const pale = rgb(244 / 255, 247 / 255, 250 / 255);
+  const danger = rgb(153 / 255, 45 / 255, 45 / 255);
   const total = roundMoney(reservation.total_amount || 0);
   const paid = roundMoney(reservation.paid_amount || 0);
   const pending = roundMoney(Math.max(0, total - paid));
@@ -185,58 +196,52 @@ export async function buildReservationConfirmationPdf({ reservation, payments = 
   const agency = reservation.agencies || {};
   const value = value => String(value ?? '').trim() || 'No consta';
   const moneyPdf = amount => `${Number(amount || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR`;
-  const datePdf = input => input ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'long', timeZone: 'Europe/Madrid' }).format(new Date(input)) : 'No consta';
-  const row = (label, text, y, width = 230) => { doc.font('Helvetica-Bold').fontSize(9).fillColor(muted).text(label.toUpperCase(), 52, y, { width }); doc.font('Helvetica').fontSize(11).fillColor(ink).text(value(text), 52, y + 14, { width }); };
+  const datePdf = input => input ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeZone: 'Europe/Madrid' }).format(new Date(input)) : 'No consta';
+  const draw = (text, x, y, { font = regular, size = 10, color = ink, maxWidth } = {}) => page.drawText(value(text), { x, y, font, size, color, maxWidth });
+  const field = (label, text, x, y, maxWidth = 205) => { draw(label.toUpperCase(), x, y, { font: bold, size: 7.5, color: muted, maxWidth }); draw(text, x, y - 15, { size: 10, maxWidth }); };
+  const rightText = (text, right, y, options = {}) => { const font = options.font || regular, size = options.size || 10; const width = font.widthOfTextAtSize(value(text), size); draw(text, right - width, y, { ...options, font, size }); };
 
-  doc.rect(0, 0, 595.28, 118).fill(navy);
-  doc.rect(0, 114, 595.28, 4).fill(gold);
-  doc.font('Helvetica-Bold').fontSize(23).fillColor('#ffffff').text('PROYEKTA VIAJES', 52, 38);
-  doc.font('Helvetica').fontSize(9.5).fillColor('#e8edf5').text('Viajes que se recuerdan · reservas@proyektaviajes.es · proyektaviajes.es', 52, 72);
-  doc.font('Helvetica-Bold').fontSize(18).fillColor(navy).text('CONFIRMACIÓN DE RESERVA Y PAGO', 52, 145);
-  doc.font('Helvetica').fontSize(10).fillColor(muted).text(`Documento ${value(reservation.reservation_code)} · Emitido el ${datePdf(new Date())}`, 52, 172);
+  draw('CONFIRMACIÓN DE RESERVA Y PAGO', 78, 625, { font: bold, size: 16, color: navy });
+  draw(`Documento ${value(reservation.reservation_code)} · Emitido el ${datePdf(new Date())}`, 78, 604, { size: 8.5, color: muted });
+  page.drawRectangle({ x: 78, y: 535, width: 455, height: 49, color: pale, borderColor: blueGrey, borderWidth: 0.7 });
+  draw('ESTADO DEL PAGO', 94, 563, { font: bold, size: 7.5, color: muted });
+  draw(paymentKind, 94, 545, { font: bold, size: 13, color: navy });
+  draw('PAGADO', 397, 563, { font: bold, size: 7.5, color: muted });
+  rightText(moneyPdf(paid), 517, 545, { font: bold, size: 13, color: navy });
 
-  doc.roundedRect(52, 202, 491, 72, 8).fill(pale);
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(muted).text('ESTADO DEL PAGO', 70, 220);
-  doc.font('Helvetica-Bold').fontSize(16).fillColor(navy).text(paymentKind, 70, 240);
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(muted).text('PAGADO', 355, 220);
-  doc.font('Helvetica-Bold').fontSize(16).fillColor(navy).text(moneyPdf(paid), 355, 240, { width: 165, align: 'right' });
+  draw('Datos de la reserva', 78, 505, { font: bold, size: 12, color: navy });
+  field('Código de reserva', reservation.reservation_code, 78, 483);
+  field('Titular', reservation.lead_traveller_name, 320, 483);
+  field('Viaje', departure.trip_name, 78, 438);
+  field('Salida', `${value(departure.departure_code)} · ${datePdf(departure.starts_at)} - ${datePdf(departure.ends_at)}`, 320, 438, 210);
+  field('Número de viajeros', reservation.requested_places || 0, 78, 393);
+  field('Agencia colaboradora', agency.commercial_name || 'Reserva directa', 320, 393);
 
-  doc.font('Helvetica-Bold').fontSize(13).fillColor(navy).text('Datos de la reserva', 52, 302);
-  row('Código de reserva', reservation.reservation_code, 330);
-  doc.font('Helvetica-Bold').fontSize(9).fillColor(muted).text('TITULAR', 313, 330, { width: 230 });
-  doc.font('Helvetica').fontSize(11).fillColor(ink).text(value(reservation.lead_traveller_name), 313, 344, { width: 230 });
-  row('Viaje', departure.trip_name, 382);
-  doc.font('Helvetica-Bold').fontSize(9).fillColor(muted).text('SALIDA', 313, 382, { width: 230 });
-  doc.font('Helvetica').fontSize(11).fillColor(ink).text(`${value(departure.departure_code)} · ${datePdf(departure.starts_at)} - ${datePdf(departure.ends_at)}`, 313, 396, { width: 230 });
-  row('Número de viajeros', reservation.requested_places || 0, 438);
-  doc.font('Helvetica-Bold').fontSize(9).fillColor(muted).text('AGENCIA COLABORADORA', 313, 438, { width: 230 });
-  doc.font('Helvetica').fontSize(11).fillColor(ink).text(value(agency.commercial_name || 'Reserva directa'), 313, 452, { width: 230 });
-
-  doc.font('Helvetica-Bold').fontSize(13).fillColor(navy).text('Resumen económico', 52, 500);
-  const summaryY = 528;
+  draw('Resumen económico', 78, 350, { font: bold, size: 12, color: navy });
   [['Total reserva', total], ['Importe pagado', paid], ['Pendiente', pending]].forEach(([label, amount], index) => {
-    const x = 52 + index * 164;
-    doc.roundedRect(x, summaryY, 151, 58, 6).lineWidth(0.7).strokeColor('#d0d5dd').stroke();
-    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(muted).text(label.toUpperCase(), x + 12, summaryY + 12, { width: 127 });
-    doc.font('Helvetica-Bold').fontSize(14).fillColor(index === 2 && amount > 0 ? '#9b2c2c' : navy).text(moneyPdf(amount), x + 12, summaryY + 31, { width: 127 });
+    const x = 78 + index * 153;
+    page.drawRectangle({ x, y: 294, width: 140, height: 43, borderColor: blueGrey, borderWidth: 0.7 });
+    draw(label.toUpperCase(), x + 10, 320, { font: bold, size: 7, color: muted });
+    draw(moneyPdf(amount), x + 10, 302, { font: bold, size: 11.5, color: index === 2 && amount > 0 ? danger : navy });
   });
 
   const validPayments = payments.filter(payment => !['anulado', 'rechazado'].includes(String(payment.status || '').toLowerCase()) && Number(payment.amount || 0) > 0);
-  doc.font('Helvetica-Bold').fontSize(13).fillColor(navy).text('Pagos registrados', 52, 618);
-  let y = 645;
-  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(muted).text('FECHA', 52, y).text('CONCEPTO / REFERENCIA', 150, y).text('IMPORTE', 438, y, { width: 105, align: 'right' });
-  y += 18;
+  draw('Pagos registrados', 78, 265, { font: bold, size: 12, color: navy });
+  draw('FECHA', 78, 244, { font: bold, size: 7, color: muted });
+  draw('CONCEPTO / REFERENCIA', 175, 244, { font: bold, size: 7, color: muted });
+  rightText('IMPORTE', 533, 244, { font: bold, size: 7, color: muted });
+  let y = 224;
   for (const payment of validPayments.slice(0, 5)) {
-    doc.moveTo(52, y - 5).lineTo(543, y - 5).lineWidth(0.5).strokeColor('#e4e7ec').stroke();
-    doc.font('Helvetica').fontSize(9.5).fillColor(ink).text(datePdf(payment.created_at), 52, y, { width: 90 });
-    doc.text(value(payment.concept || payment.external_reference || payment.method), 150, y, { width: 275 });
-    doc.font('Helvetica-Bold').text(moneyPdf(payment.amount), 438, y, { width: 105, align: 'right' });
-    y += 25;
+    page.drawLine({ start: { x: 78, y: y + 11 }, end: { x: 533, y: y + 11 }, thickness: 0.4, color: blueGrey });
+    draw(datePdf(payment.created_at), 78, y, { size: 8.5 });
+    draw(payment.concept || payment.external_reference || payment.method, 175, y, { size: 8.5, maxWidth: 250 });
+    rightText(moneyPdf(payment.amount), 533, y, { font: bold, size: 8.5 });
+    y -= 23;
   }
-  if (!validPayments.length) doc.font('Helvetica').fontSize(10).fillColor(muted).text('No hay pagos contabilizados.', 52, y);
-  doc.font('Helvetica').fontSize(8.5).fillColor(muted).text('Este documento confirma los datos registrados en PROYEKTA VIAJES en la fecha de emisión. No sustituye una factura cuando esta resulte legalmente exigible.', 52, 770, { width: 491, align: 'center' });
-  doc.end();
-  return completed;
+  if (!validPayments.length) draw('No hay pagos contabilizados.', 78, y, { size: 8.5, color: muted });
+  draw('Este documento confirma los datos registrados en PROYEKTA VIAJES en la fecha de emisión.', 92, 96, { size: 7.2, color: muted, maxWidth: 430 });
+  draw('No sustituye una factura cuando esta resulte legalmente exigible.', 145, 84, { size: 7.2, color: muted, maxWidth: 340 });
+  return Buffer.from(await pdf.save());
 }
 
 function sign(payload) {

@@ -12,6 +12,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "pdfkit": "0.17.2"
+    "pdf-lib": "1.17.1"
   }
 }
