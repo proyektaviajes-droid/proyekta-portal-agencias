@@ -1,0 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
+const source=resolve(process.argv[2]||'');
+if(!process.argv[2])throw new Error('Uso: node scripts/migrate-cuentas-central.mjs RUTA_AL_JSON');
+const db=JSON.parse(readFileSync(source,'utf8'));
+if(!Array.isArray(db.movements))throw new Error('El archivo no parece una copia de PROYEKTA CUENTAS.');
+const baseUrl=process.env.PROYEKTA_BASE_URL||'https://agencias.proyektaviajes.es';
+const email=process.env.PROYEKTA_ADMIN_EMAIL,password=process.env.PROYEKTA_ADMIN_PASSWORD;
+if(!email||!password)throw new Error('Faltan PROYEKTA_ADMIN_EMAIL y PROYEKTA_ADMIN_PASSWORD en el entorno.');
+const login=await fetch(`${baseUrl}/api/auth/admin-login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,password})});
+if(!login.ok)throw new Error(`No se pudo iniciar sesión (${login.status}).`);
+const cookie=login.headers.get('set-cookie')?.split(';')[0];if(!cookie)throw new Error('El servidor no devolvió una sesión.');
+const response=await fetch(`${baseUrl}/api/admin/cuentas/sync`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({deviceId:`migracion-${basename(source)}`,movements:db.movements,deletedMovements:db.settings?.deletedMovements||{},history:db.history||[],reimbursementReports:db.reimbursementReports||[]})});
+const result=await response.json();if(!response.ok)throw new Error(result.error||`Migración rechazada (${response.status}).`);
+console.log(JSON.stringify({source,movements:db.movements.length,...result},null,2));

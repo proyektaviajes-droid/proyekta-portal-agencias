@@ -620,6 +620,57 @@ async function adminApi(req, res, url) {
   const session = requireSession(req, res, 'admin');
   if (!session) return;
 
+  if (req.method === 'GET' && url.pathname === '/api/admin/cuentas/snapshot') {
+    try {
+      const [movementRows, historyRows, reportRows] = await Promise.all([
+        supa('cuentas_movements', { query: { select: 'legacy_id,payload,updated_at,deleted_at,revision', order: 'updated_at.asc' } }),
+        supa('cuentas_history', { query: { select: 'legacy_id,payload,occurred_at', order: 'occurred_at.desc', limit: '5000' } }),
+        supa('cuentas_reimbursement_reports', { query: { select: 'legacy_id,payload,updated_at', order: 'updated_at.desc' } })
+      ]);
+      const deletedMovements = {}, movements = [];
+      for (const row of movementRows) {
+        if (row.deleted_at) deletedMovements[row.legacy_id] = row.deleted_at;
+        else movements.push({ ...row.payload, id: row.legacy_id, updatedAt: row.updated_at, _centralRevision: row.revision });
+      }
+      return json(res, 200, { version: 3, movements,
+        history: historyRows.map(row => ({ ...row.payload, id: row.legacy_id, at: row.occurred_at })),
+        reimbursementReports: reportRows.map(row => ({ ...row.payload, id: row.legacy_id, updatedAt: row.updated_at })),
+        settings: { deletedMovements, centralSyncAt: new Date().toISOString() }, updatedAt: new Date().toISOString() });
+    } catch (error) {
+      if (/cuentas_(movements|history|reimbursement_reports)/i.test(error.message)) return json(res, 424, { setupRequired: true, error: 'Falta activar db/009_cuentas_central.sql en Supabase.' });
+      throw error;
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/cuentas/sync') {
+    const input = await bodyJson(req), deviceId = cleanSyncText(input.deviceId, 120) || 'dispositivo-sin-identificar';
+    const movements = Array.isArray(input.movements) ? input.movements.slice(0, 10000) : [];
+    const deleted = input.deletedMovements && typeof input.deletedMovements === 'object' ? input.deletedMovements : {};
+    let accepted = 0, conflicts = 0;
+    for (const movement of movements) {
+      const legacyId = cleanSyncId(movement?.id); if (!legacyId) continue;
+      const result = await supa('rpc/cuentas_accept_movement', { method: 'POST', body: { p_legacy_id: legacyId, p_payload: movement, p_updated_at: validSyncDate(movement.updatedAt || movement.createdAt || movement.date), p_deleted_at: null, p_source_device: deviceId } });
+      if (result === true) accepted += 1; else conflicts += 1;
+    }
+    for (const [rawId, rawDate] of Object.entries(deleted).slice(0, 10000)) {
+      const legacyId = cleanSyncId(rawId); if (!legacyId) continue;
+      const deletedAt = validSyncDate(rawDate);
+      const result = await supa('rpc/cuentas_accept_movement', { method: 'POST', body: { p_legacy_id: legacyId, p_payload: {}, p_updated_at: deletedAt, p_deleted_at: deletedAt, p_source_device: deviceId } });
+      if (result === true) accepted += 1; else conflicts += 1;
+    }
+    for (const item of (Array.isArray(input.history) ? input.history.slice(0, 5000) : [])) {
+      const legacyId = cleanSyncId(item?.id); if (!legacyId) continue;
+      await supa('cuentas_history', { method: 'POST', query: { on_conflict: 'legacy_id' }, prefer: 'resolution=ignore-duplicates,return=minimal', body: [{ legacy_id: legacyId, payload: item, occurred_at: validSyncDate(item.at) }] });
+    }
+    for (const report of (Array.isArray(input.reimbursementReports) ? input.reimbursementReports.slice(0, 1000) : [])) {
+      const legacyId = cleanSyncId(report?.id); if (!legacyId) continue;
+      await supa('cuentas_reimbursement_reports', { method: 'POST', query: { on_conflict: 'legacy_id' }, prefer: 'resolution=merge-duplicates,return=minimal', body: [{ legacy_id: legacyId, payload: report, updated_at: validSyncDate(report.updatedAt || report.createdAt || report.date) }] });
+    }
+    await optionalSupa('cuentas_sync_log', { method: 'POST', body: [{ device_id: deviceId, actor_id: session.userId, received: movements.length + Object.keys(deleted).length, accepted, conflicts }] }, []);
+    await audit(session, 'cuentas_central_sync', 'cuentas', null, { deviceId, received: movements.length + Object.keys(deleted).length, accepted, conflicts });
+    return json(res, 200, { ok: true, accepted, conflicts });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/agency-requests') {
     const [requests, leads] = await Promise.all([
       optionalSupa('control_agencies', { query: { select: '*', status: 'eq.lead', deleted_at: 'is.null', order: 'created_at.desc', limit: '200' } }),
@@ -1939,6 +1990,10 @@ function buildPaymentInstructions(reservation) {
   ].filter(Boolean);
   return { text: lines.join('\n'), concept, requiredAmount, paidAmount, pendingAmount, totalAmount, pendingTotal };
 }
+
+function cleanSyncId(value) { const text=String(value||'').trim(); return /^[A-Za-z0-9_-]{1,120}$/.test(text)?text:''; }
+function cleanSyncText(value,maxLength) { return String(value||'').trim().replace(/[\x00-\x1f]/g,'').slice(0,maxLength); }
+function validSyncDate(value) { const parsed=new Date(value||0); return Number.isFinite(parsed.getTime())&&parsed.getTime()>0?parsed.toISOString():new Date().toISOString(); }
 
 async function notifyPaymentReported(payment, reservation, session) {
   const agency = reservation.agencies?.commercial_name || session.agencyCode || '';
