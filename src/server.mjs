@@ -671,6 +671,28 @@ async function adminApi(req, res, url) {
     return json(res, 200, { ok: true, accepted, conflicts });
   }
 
+  const cuentasDocumentMatch = url.pathname.match(/^\/api\/admin\/cuentas\/documents\/([A-Za-z0-9_-]{1,120})$/);
+  if (cuentasDocumentMatch && req.method === 'GET') {
+    const movementId = cuentasDocumentMatch[1];
+    const rows = await supa('cuentas_documents', { query: { movement_legacy_id: `eq.${movementId}`, limit: '1' } });
+    if (!rows[0]) return json(res, 404, { error: 'Justificante no encontrado' });
+    const file = await downloadAccountingFile(rows[0].storage_path);
+    return binary(res, rows[0].filename, file.mimeType, file.buffer);
+  }
+  if (cuentasDocumentMatch && req.method === 'POST') {
+    const movementId = cuentasDocumentMatch[1], input = await bodyJson(req), parsed = parseUpload(input);
+    const filename = safeFilename(input.filename || `justificante-${movementId}.${extensionForMime(parsed.mimeType)}`);
+    const sha256 = createHash('sha256').update(parsed.buffer).digest('hex');
+    const existing = (await optionalSupa('cuentas_documents', { query: { movement_legacy_id: `eq.${movementId}`, limit: '1' } }, []))[0];
+    if (existing?.sha256 === sha256) return json(res, 200, { ok: true, unchanged: true, sha256 });
+    const storagePath = `cuentas/documents/${movementId}/${sha256}-${filename}`;
+    await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
+    const row = { movement_legacy_id: movementId, filename, mime_type: parsed.mimeType, storage_path: storagePath, byte_size: parsed.buffer.length, sha256, updated_at: validSyncDate(input.updatedAt) };
+    await supa('cuentas_documents', { method: 'POST', query: { on_conflict: 'movement_legacy_id' }, prefer: 'resolution=merge-duplicates,return=representation', body: [row] });
+    await audit(session, 'cuentas_document_uploaded', 'cuentas_documents', movementId, { filename, sha256, byteSize: parsed.buffer.length });
+    return json(res, 200, { ok: true, sha256, byteSize: parsed.buffer.length });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/admin/agency-requests') {
     const [requests, leads] = await Promise.all([
       optionalSupa('control_agencies', { query: { select: '*', status: 'eq.lead', deleted_at: 'is.null', order: 'created_at.desc', limit: '200' } }),

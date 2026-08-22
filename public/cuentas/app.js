@@ -47,13 +47,14 @@ async function centralSync(){if(centralRunning){centralQueued=true;return}centra
   if(first.status===401){$('syncStatus').textContent='Base central: inicia sesión como administrador en PROYEKTA CONTROL y vuelve a abrir Cuentas.';return}
   const initial=await first.json();if(!first.ok)throw new Error(initial.error||'No se pudo leer la base central');db=mergeDb(db,normalize(initial));
   const sent=await fetch('/api/admin/cuentas/sync',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({deviceId:deviceId(),movements:db.movements,deletedMovements:db.settings?.deletedMovements||{},history:db.history,reimbursementReports:db.reimbursementReports})});
-  const result=await sent.json();if(!sent.ok)throw new Error(result.error||'No se pudo enviar la sincronización');
+  const result=await sent.json();if(!sent.ok)throw new Error(result.error||'No se pudo enviar la sincronización');await syncCentralAttachments();
   const finalResponse=await fetch('/api/admin/cuentas/snapshot',{credentials:'same-origin'}),central=await finalResponse.json();if(!finalResponse.ok)throw new Error(central.error||'No se pudo verificar la sincronización');
   db=mergeDb(db,normalize(central));db.settings={...db.settings,lastSyncAt:new Date().toISOString(),central:true};await persist();render();toast(`Base central actualizada: ${result.accepted} cambios aceptados.`)
 }catch(error){$('syncStatus').textContent=`Sin conexión con la base central. La copia cifrada local sigue operativa. ${error.message}`}
 finally{centralRunning=false;if(centralQueued){centralQueued=false;scheduleCentralSync(300)}}}
 function scheduleCentralSync(delay=800){clearTimeout(centralTimer);centralTimer=setTimeout(()=>centralSync(),delay)}
 window.addEventListener('online',()=>{if(key)scheduleCentralSync(100)});
+async function syncCentralAttachments(){for(const movement of db.movements){const stored=await getAttachment(movement.id);if(!stored)continue;const data=await blobToDataUrl(stored.blob);const response=await fetch(`/api/admin/cuentas/documents/${encodeURIComponent(movement.id)}`,{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({filename:stored.name,mimeType:stored.type,data,updatedAt:movement.updatedAt||new Date().toISOString()})});if(!response.ok){const problem=await response.json().catch(()=>({}));throw new Error(problem.error||`No se pudo sincronizar ${stored.name}`)}}}
 async function decrypt(packet,cryptoKey){const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:from64(packet.iv)},cryptoKey,from64(packet.cipher));return dec.decode(plain)}
 function to64(bytes){let s='';bytes.forEach(b=>s+=String.fromCharCode(b));return btoa(s)}function from64(s){return Uint8Array.from(atob(s),c=>c.charCodeAt(0))}
 function lock(){$('app').hidden=true;$('lock').hidden=false;key=null;db=emptyDb();$('lockHelp').textContent='Introduce el PIN creado en este dispositivo.'}
