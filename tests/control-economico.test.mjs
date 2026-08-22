@@ -48,3 +48,11 @@ test('no cuenta solicitudes ni aplica Novas Rutas en salidas desactivadas', () =
   assert.equal(result.summary.novasTravellerService, 0);
   assert.equal(result.payables.some(row => row.type === 'novas_service'), false);
 });
+
+test('un pago a Novas Rutas reduce la liquidación pendiente', () => {
+  const result = calculateOperationalEconomics({ ...data, operatingCosts: [...data.operatingCosts, { departure_id: 'd1', concept: '[PAGO_NOVAS_RUTAS_20_POR_PERSONA]', amount: 40, status: 'pagado' }] });
+  const payable = result.payables.find(row => row.type === 'novas_service');
+  assert.equal(payable.due, 60);
+  assert.equal(payable.paid, 40);
+  assert.equal(payable.pending, 20);
+});

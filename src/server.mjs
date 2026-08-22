@@ -43,6 +43,7 @@ export function makeReservationCode(year, originCode, number) {
 
 export function calculateOperationalEconomics({ agencies = [], departures = [], reservations = [], travellers = [], rules = [], operatingCosts = [], commissions = [] } = {}) {
   const novasFlagConcept = '[NOVAS_RUTAS_20_POR_PERSONA]';
+  const novasPaymentConcept = '[PAGO_NOVAS_RUTAS_20_POR_PERSONA]';
   const confirmedStatuses = new Set(['confirmada', 'pago_parcial', 'pagada', 'completada', 'finalizada']);
   const activeReservations = reservations.filter(reservation => confirmedStatuses.has(String(reservation.status || '').toLowerCase()));
   const agencyById = new Map(agencies.map(agency => [agency.id, agency]));
@@ -70,7 +71,8 @@ export function calculateOperationalEconomics({ agencies = [], departures = [], 
     groupedAgencies.set(key, current);
   }
   const novasEnabledDepartures = new Set(operatingCosts.filter(cost => cost.concept === novasFlagConcept && String(cost.status || '') !== 'cancelado').map(cost => cost.departure_id));
-  const validCosts = operatingCosts.filter(cost => cost.concept !== novasFlagConcept && String(cost.status || '') !== 'cancelado');
+  const novasPaidByDeparture = operatingCosts.filter(cost => cost.concept === novasPaymentConcept && String(cost.status || '') === 'pagado').reduce((map, cost) => map.set(cost.departure_id, roundMoney((map.get(cost.departure_id) || 0) + Number(cost.amount || 0))), new Map());
+  const validCosts = operatingCosts.filter(cost => ![novasFlagConcept, novasPaymentConcept].includes(cost.concept) && String(cost.status || '') !== 'cancelado');
   const groupedDepartures = new Map();
   for (const row of reservationRows) {
     const key = row.departureId || 'unassigned';
@@ -97,7 +99,7 @@ export function calculateOperationalEconomics({ agencies = [], departures = [], 
   const roundedAgencies = [...groupedAgencies.values()].map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'number' ? roundMoney(value) : value])));
   const payables = [
     ...roundedAgencies.filter(row => row.pendingCommission > 0).map(row => ({ type: 'agency_commission', id: row.agencyId, payee: row.agencyName, concept: `Comisiones devengadas (${row.reservations} reservas / ${row.travellers} personas)`, due: row.earnedCommission, paid: row.paidCommission, pending: row.pendingCommission })),
-    ...departureRows.filter(row => row.novasTravellerService > 0).map(row => ({ type: 'novas_service', id: row.departureId, payee: 'Novas Rutas', concept: `${row.departureCode}: ${row.travellers} personas x ${novasRate.toFixed(2)} EUR`, due: row.novasTravellerService, paid: 0, pending: row.novasTravellerService }))
+    ...departureRows.filter(row => row.novasTravellerService > 0).map(row => { const paid = Math.min(row.novasTravellerService, novasPaidByDeparture.get(row.departureId) || 0); return { type: 'novas_service', id: row.departureId, payee: 'Novas Rutas', concept: `${row.departureCode}: ${row.travellers} personas x ${novasRate.toFixed(2)} EUR`, due: row.novasTravellerService, paid, pending: roundMoney(row.novasTravellerService - paid) }; }).filter(row => row.pending > 0)
   ];
   economicSummary.pendingPayables = roundMoney(payables.reduce((total, row) => total + row.pending, 0));
   return { summary: economicSummary, reservations: reservationRows, agencies: roundedAgencies, departures: departureRows, payables, operatingCosts: validCosts, novasRutas: { agencyId: novas?.id || null, ratePerTraveller: novasRate, configured: Boolean(novasRule) } };
@@ -1312,6 +1314,16 @@ async function adminApi(req, res, url) {
     }
     await audit(session, 'agency_commission_paid', 'agencies', agencyId, { amount: roundMoney(input.amount), unapplied: remaining, reference: input.reference || null });
     return json(res, 200, { ok: true, applied: roundMoney(Number(input.amount) - remaining), unapplied: remaining });
+  }
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/economics\/departures\/[^/]+\/novas-rutas\/paid$/)) {
+    const id = url.pathname.split('/')[5];
+    const input = await bodyJson(req);
+    const amount = Math.max(0, roundMoney(input.amount));
+    if (!amount) return json(res, 400, { error: 'Indica un importe válido.' });
+    const novas = (await supa('agencies', { query: { select: 'id,commercial_name', commercial_name: 'ilike.*Novas Rutas*', limit: '1' } }))[0];
+    const cost = (await supa('departure_operating_costs', { method: 'POST', body: [{ departure_id: id, supplier_agency_id: novas?.id || null, concept: '[PAGO_NOVAS_RUTAS_20_POR_PERSONA]', cost_type: 'servicio', amount, status: 'pagado', notes: input.reference || 'Pago del servicio por viajero de Novas Rutas' }] }))[0];
+    await audit(session, 'novas_rutas_paid', 'departures', id, { amount, reference: input.reference || null });
+    return json(res, 201, { cost });
   }
   if (req.method === 'POST' && url.pathname === '/api/admin/economics/operating-costs') {
     try {

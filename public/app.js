@@ -332,6 +332,13 @@ async function adminView(view) {
         await api(`/api/admin/economics/commissions/${btn.dataset.payCommission}/paid`, { method: 'PATCH', body: { amount: Number(String(amount).replace(',', '.')), reference } });
         adminView('adminGestoria');
       });
+      target.querySelectorAll('[data-pay-novas]').forEach(btn => btn.onclick = async () => {
+        const amount = prompt('Importe pagado a Novas Rutas:', btn.dataset.pending);
+        if (amount === null) return;
+        const reference = prompt('Referencia del pago (opcional):', '') || '';
+        await api(`/api/admin/economics/departures/${btn.dataset.payNovas}/novas-rutas/paid`, { method: 'POST', body: { amount: Number(String(amount).replace(',', '.')), reference } });
+        adminView('adminGestoria');
+      });
     } catch (err) {
       const needsSetup = /falta ejecutar|relation|does not exist/i.test(String(err.message || ''));
       target.innerHTML = html`
@@ -1318,7 +1325,7 @@ function gestoriaLiquidaciones(model) {
 }
 
 function gestoriaPendientes(model) {
-  return html`<h3>A quién y cuánto pagar</h3><p class="muted">Resumen final calculado con cobros verificados, comisiones pagadas registradas y Novas Rutas solo en las salidas activadas.</p>${table(['Destinatario','Concepto','Devengado','Pagado','Pendiente'], model.economics.payables.map(row => [row.payee, row.concept, money(row.due), money(row.paid), money(row.pending)]))}`;
+  return html`<h3>A quién y cuánto pagar</h3><p class="muted">Resumen final calculado con cobros verificados, comisiones pagadas registradas y Novas Rutas solo en las salidas activadas.</p>${table(['Destinatario','Concepto','Devengado','Pagado','Pendiente','Acción'], model.economics.payables.map(row => [row.payee, row.concept, money(row.due), money(row.paid), money(row.pending), row.type === 'novas_service' ? `<button data-pay-novas="${row.id}" data-pending="${row.pending}">Registrar pago</button>` : 'Usa Agencias y comisiones']))}`;
 }
 
 function gestoriaCaja(model) {
