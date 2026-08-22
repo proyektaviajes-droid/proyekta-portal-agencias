@@ -10,7 +10,7 @@
   <title>PROYEKTA CUENTAS</title>
   <link rel="manifest" href="/cuentas/manifest.webmanifest">
   <link rel="stylesheet" href="/cuentas/styles.css">
-  <style>[hidden]{display:none!important}.attachment-box{margin-top:14px;padding:14px;border:1px solid #d9e0e8;border-radius:12px;background:#f8fafc}.attachment-box input{margin-top:8px}.attachment-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.attachment-actions button{padding:8px 12px}</style>
+  <style>[hidden]{display:none!important}.attachment-box,.payments-box{margin-top:14px;padding:14px;border:1px solid #d9e0e8;border-radius:12px;background:#f8fafc}.attachment-box input{margin-top:8px}.attachment-actions,.payment-entry{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.attachment-actions button,.payment-entry button{padding:8px 12px}.payment-list{display:grid;gap:8px;margin:10px 0}.payment-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px;background:white;border-radius:8px}.payment-row button{color:#a21b1b}.payment-entry label{flex:1;min-width:120px}</style>
 </head>
 <body>
   <div id="lock" class="lock-screen">
@@ -73,13 +73,22 @@
         <label>Categoría<input id="category"></label>
         <label>Importe total<input id="amount" type="number" inputmode="decimal" min="0.01" step="0.01" required></label>
         <label>Forma de pago<select id="method"><option>Tarjeta</option><option>Transferencia</option><option>Efectivo</option><option>Domiciliacion</option><option>Pago a plazos</option><option>Otro</option></select></label>
-        <label id="paidWrap">Ya cobrado / pagado<input id="paidAmount" type="number" inputmode="decimal" min="0" step="0.01" value="0"></label>
+        <label id="paidWrap">Total pagado (calculado)<input id="paidAmount" type="number" value="0" readonly></label>
         <label>IVA %<input id="vat" type="number" inputmode="decimal" min="0" step="0.01" value="21"></label>
       </div>
       <section id="installmentFields" class="installments" hidden>
         <label>Número de cuotas<input id="installmentCount" type="number" inputmode="numeric" min="2" max="120" value="2"></label>
         <label>Cuotas pagadas<input id="installmentsPaid" type="number" inputmode="numeric" min="0" value="0"></label>
         <strong id="installmentSummary">Cuota mensual: 0,00 €</strong>
+      </section>
+      <section id="paymentsBox" class="payments-box">
+        <strong>Pagos independientes</strong><p id="paymentsSummary">Ningún pago registrado.</p>
+        <div id="paymentList" class="payment-list"></div>
+        <div class="payment-entry">
+          <label>Fecha<input id="paymentDate" type="date"></label><label>Importe<input id="paymentAmount" type="number" inputmode="decimal" min="0.01" step="0.01"></label>
+          <label>Método<select id="paymentMethod"><option>Transferencia</option><option>Tarjeta</option><option>Efectivo</option><option>Domiciliacion</option><option>Otro</option></select></label><label>Referencia<input id="paymentReference"></label>
+          <button id="addPayment" type="button">Añadir pago</button>
+        </div>
       </section>
       <label>Factura / referencia<input id="invoice"></label>
       <label>Notas<textarea id="notes" rows="3"></textarea></label>
