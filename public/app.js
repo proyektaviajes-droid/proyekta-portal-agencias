@@ -321,6 +321,17 @@ async function adminView(view) {
         adminView('adminGestoria');
       });
       target.querySelectorAll('[data-accounting-upload]').forEach(btn => btn.onclick = () => uploadAccountingFile(btn.dataset.accountingUpload));
+      target.querySelectorAll('[data-novas-toggle]').forEach(btn => btn.onclick = async () => {
+        await api(`/api/admin/economics/departures/${btn.dataset.novasToggle}/novas-rutas`, { method: 'PATCH', body: { enabled: btn.dataset.enabled !== 'true' } });
+        adminView('adminGestoria');
+      });
+      target.querySelectorAll('[data-pay-commission]').forEach(btn => btn.onclick = async () => {
+        const amount = prompt(`Importe de la comisión pagada a ${btn.dataset.name}:`, btn.dataset.pending);
+        if (amount === null) return;
+        const reference = prompt('Referencia del pago (opcional):', '') || '';
+        await api(`/api/admin/economics/commissions/${btn.dataset.payCommission}/paid`, { method: 'PATCH', body: { amount: Number(String(amount).replace(',', '.')), reference } });
+        adminView('adminGestoria');
+      });
     } catch (err) {
       const needsSetup = /falta ejecutar|relation|does not exist/i.test(String(err.message || ''));
       target.innerHTML = html`
@@ -1050,6 +1061,7 @@ function gestoriaDashboard(data) {
       ${metric('Pendiente clientes', money(economicSummary.pendingCustomer))}
       ${metric('Comisiones devengadas', money(economicSummary.earnedCommission))}
       ${metric('Costes operativos', money(economicSummary.operatingExpenses))}
+      ${metric('Pendiente de pagar', money(economicSummary.pendingPayables))}
       ${metric('Margen sobre cobrado', money(economicSummary.marginCollected))}
     </div>
     <div id="accountingForm" class="panel hidden">${accountingDocumentForm()}</div>
@@ -1059,6 +1071,7 @@ function gestoriaDashboard(data) {
     <div id="operatingCostForm" class="panel hidden">${operatingCostForm(data)}</div>
       ${gestoriaTabButton('resumen', 'Resumen', true)}
       ${gestoriaTabButton('agencias', 'Agencias y comisiones')}
+      ${gestoriaTabButton('liquidaciones', 'A quién pagar')}
       ${gestoriaTabButton('salidas', 'Rentabilidad por salida')}
       ${gestoriaTabButton('reservas', 'Reservas y viajeros')}
       ${gestoriaTabButton('costes', 'Costes de excursiones')}
@@ -1072,6 +1085,7 @@ function gestoriaDashboard(data) {
     </div>
     <section class="gestoria-section" data-gestoria-section="resumen">${gestoriaResumen(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="agencias">${gestoriaLiquidaciones(model)}</section>
+    <section class="gestoria-section hidden" data-gestoria-section="liquidaciones">${gestoriaPendientes(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="salidas">${gestoriaSalidas(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="reservas">${gestoriaReservasEconomicas(model)}</section>
     <section class="gestoria-section hidden" data-gestoria-section="costes">${gestoriaCostes(model)}</section>
@@ -1097,7 +1111,7 @@ function showGestoriaTab(id) {
 function buildGestoriaModel(data) {
   const documents = data.documents || [];
   const rawEconomics = data?.economics || {};
-  const economics = { ...rawEconomics, summary: rawEconomics.summary || {}, reservations: rawEconomics.reservations || [], agencies: rawEconomics.agencies || [], departures: rawEconomics.departures || [], operatingCosts: rawEconomics.operatingCosts || [], novasRutas: rawEconomics.novasRutas || { ratePerTraveller: 20 } };
+  const economics = { ...rawEconomics, summary: rawEconomics.summary || {}, reservations: rawEconomics.reservations || [], agencies: rawEconomics.agencies || [], departures: rawEconomics.departures || [], payables: rawEconomics.payables || [], operatingCosts: rawEconomics.operatingCosts || [], novasRutas: rawEconomics.novasRutas || { ratePerTraveller: 20 } };
   const realDocs = documents.filter(d => !['presupuesto', 'proforma'].includes(d.document_type) && !['borrador', 'cancelada'].includes(d.status));
   const incomeDocs = realDocs.filter(d => d.direction === 'ingreso');
   const expenseDocs = realDocs.filter(d => d.direction === 'gasto');
@@ -1142,8 +1156,8 @@ function operatingCostForm(data) {
 }
 
 function gestoriaResumen(model) {
-  return html`
   const summary = model.economics.summary;
+  return html`
     <div class="grid two">
       ${summaryCard('Actividad comercial', money(summary.sales), `${summary.reservations || 0} reservas · ${summary.confirmedTravellers || 0} personas · ${money(summary.collected)} cobrado`)}
       ${summaryCard('Margen de caja operativo', money(summary.marginCollected), 'Cobrado menos comisiones devengadas, Novas Rutas y costes reales registrados')}
@@ -1161,10 +1175,9 @@ function gestoriaResumen(model) {
   `;
 }
 
-function gestoriaOperacion(model) {
 function gestoriaSalidas(model) {
-  return html`<h3>Rentabilidad automática por salida</h3><p class="muted">Incluye reservas activas, número de personas, comisiones, 20 € por persona de Novas Rutas y costes reales registrados.</p>${table(['Salida','Reservas','Personas','Ventas','Cobrado','Pendiente','Comisión devengada','Novas 20 €/persona','Excursiones','Otros costes','Margen previsto','Margen sobre cobrado'], model.economics.departures.map(row => [
-    `${esc(row.departureCode)} · ${esc(row.tripName)}`, row.reservations, row.travellers, money(row.sales), money(row.collected), money(row.pendingCustomer), money(row.earnedCommission), money(row.novasTravellerService), money(row.excursionCosts), money(row.otherOperatingCosts), money(row.projectedMargin), money(row.marginCollected)
+  return html`<h3>Rentabilidad automática por salida</h3><p class="muted">Solo cuenta reservas confirmadas. Activa Novas Rutas únicamente en las salidas en las que presta el servicio.</p>${table(['Salida','Reservas','Personas','Ventas','Cobrado','Pendiente','Comisión devengada','Novas Rutas','Coste Novas','Excursiones','Otros costes','Margen previsto','Margen cobrado'], model.economics.departures.map(row => [
+    `${esc(row.departureCode)} · ${esc(row.tripName)}`, row.reservations, row.travellers, money(row.sales), money(row.collected), money(row.pendingCustomer), money(row.earnedCommission), `<button data-novas-toggle="${row.departureId}" data-enabled="${row.novasEnabled === true}">${row.novasEnabled ? 'Sí · desactivar' : 'No · activar'}</button>`, money(row.novasTravellerService), money(row.excursionCosts), money(row.otherOperatingCosts), money(row.projectedMargin), money(row.marginCollected)
   ]))}`;
 }
 
@@ -1180,6 +1193,7 @@ function gestoriaCostes(model) {
   ]))}`;
 }
 
+function gestoriaOperacion(model) {
   const defaultSale = Math.max(model.totalReservationSales || 0, 1149);
   const defaultCost = Math.max(model.totalExpense || 0, 0);
   const defaultPaid = Math.max(model.totalReservationPaid || 0, 0);
@@ -1297,10 +1311,14 @@ function gestoriaLiquidaciones(model) {
   return html`
     <h3>Agencias, ventas y comisiones</h3>
     <p class="muted">La comisión prevista se calcula sobre la venta. La devengada se calcula solo sobre lo que PROYEKTA ya ha cobrado.</p>
-    ${table(['Agencia','Reservas','Personas','Ventas','Cobrado','Pendiente clientes','Comisión prevista','Comisión devengada','Comisión pagada','Pendiente liquidar'], model.economics.agencies.map(row => [
-      row.agencyName, row.reservations, row.travellers, money(row.sales), money(row.collected), money(row.pendingCustomer), money(row.projectedCommission), money(row.earnedCommission), money(row.paidCommission), money(row.pendingCommission)
+    ${table(['Agencia','Reservas','Personas','Ventas','Cobrado','Pendiente clientes','Comisión prevista','Comisión devengada','Comisión pagada','Pendiente liquidar','Acción'], model.economics.agencies.map(row => [
+      row.agencyName, row.reservations, row.travellers, money(row.sales), money(row.collected), money(row.pendingCustomer), money(row.projectedCommission), money(row.earnedCommission), money(row.paidCommission), money(row.pendingCommission), row.pendingCommission > 0 && row.agencyId ? `<button data-pay-commission="${row.agencyId}" data-name="${esc(row.agencyName)}" data-pending="${row.pendingCommission}">Registrar pago</button>` : '—'
     ]))}
   `;
+}
+
+function gestoriaPendientes(model) {
+  return html`<h3>A quién y cuánto pagar</h3><p class="muted">Resumen final calculado con cobros verificados, comisiones pagadas registradas y Novas Rutas solo en las salidas activadas.</p>${table(['Destinatario','Concepto','Devengado','Pagado','Pendiente'], model.economics.payables.map(row => [row.payee, row.concept, money(row.due), money(row.paid), money(row.pending)]))}`;
 }
 
 function gestoriaCaja(model) {
@@ -1677,4 +1695,3 @@ window.addEventListener('popstate', init);
 init().catch(err => {
   app.innerHTML = `<div class="panel"><h1>Error</h1><p class="danger">${esc(err.message)}</p></div>`;
 });
-

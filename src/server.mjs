@@ -42,8 +42,9 @@ export function makeReservationCode(year, originCode, number) {
 }
 
 export function calculateOperationalEconomics({ agencies = [], departures = [], reservations = [], travellers = [], rules = [], operatingCosts = [], commissions = [] } = {}) {
-  const cancelled = new Set(['cancelada', 'anulada', 'rechazada', 'borrador']);
-  const activeReservations = reservations.filter(reservation => !cancelled.has(String(reservation.status || '').toLowerCase()));
+  const novasFlagConcept = '[NOVAS_RUTAS_20_POR_PERSONA]';
+  const confirmedStatuses = new Set(['confirmada', 'pago_parcial', 'pagada', 'completada', 'finalizada']);
+  const activeReservations = reservations.filter(reservation => confirmedStatuses.has(String(reservation.status || '').toLowerCase()));
   const agencyById = new Map(agencies.map(agency => [agency.id, agency]));
   const departureById = new Map(departures.map(departure => [departure.id, departure]));
   const travellersByReservation = travellers.reduce((map, traveller) => map.set(traveller.reservation_id, (map.get(traveller.reservation_id) || 0) + 1), new Map());
@@ -68,7 +69,8 @@ export function calculateOperationalEconomics({ agencies = [], departures = [], 
     for (const field of ['reservations','travellers','sales','collected','pendingCustomer','projectedCommission','earnedCommission','paidCommission','pendingCommission']) current[field] += field === 'reservations' ? 1 : field === 'travellers' ? row.reservedTravellers : row[field];
     groupedAgencies.set(key, current);
   }
-  const validCosts = operatingCosts.filter(cost => String(cost.status || '') !== 'cancelado');
+  const novasEnabledDepartures = new Set(operatingCosts.filter(cost => cost.concept === novasFlagConcept && String(cost.status || '') !== 'cancelado').map(cost => cost.departure_id));
+  const validCosts = operatingCosts.filter(cost => cost.concept !== novasFlagConcept && String(cost.status || '') !== 'cancelado');
   const groupedDepartures = new Map();
   for (const row of reservationRows) {
     const key = row.departureId || 'unassigned';
@@ -76,10 +78,14 @@ export function calculateOperationalEconomics({ agencies = [], departures = [], 
     current.reservations += 1; current.travellers += row.reservedTravellers; current.sales += row.sales; current.collected += row.collected; current.pendingCustomer += row.pendingCustomer; current.projectedCommission += row.projectedCommission; current.earnedCommission += row.earnedCommission;
     groupedDepartures.set(key, current);
   }
-  for (const row of groupedDepartures.values()) row.novasTravellerService = roundMoney(row.travellers * novasRate);
+  for (const row of groupedDepartures.values()) {
+    const departure = departureById.get(row.departureId);
+    row.novasEnabled = departure?.novas_rutas_enabled === true || novasEnabledDepartures.has(row.departureId);
+    row.novasTravellerService = row.novasEnabled ? roundMoney(row.travellers * novasRate) : 0;
+  }
   for (const cost of validCosts) {
     const key = cost.departure_id || 'unassigned', departure = departureById.get(cost.departure_id);
-    const current = groupedDepartures.get(key) || { departureId: cost.departure_id, departureCode: departure?.departure_code || '', tripName: departure?.trip_name || '', reservations: 0, travellers: 0, sales: 0, collected: 0, pendingCustomer: 0, projectedCommission: 0, earnedCommission: 0, novasTravellerService: 0, excursionCosts: 0, otherOperatingCosts: 0 };
+    const current = groupedDepartures.get(key) || { departureId: cost.departure_id, departureCode: departure?.departure_code || '', tripName: departure?.trip_name || '', reservations: 0, travellers: 0, sales: 0, collected: 0, pendingCustomer: 0, projectedCommission: 0, earnedCommission: 0, novasEnabled: departure?.novas_rutas_enabled === true || novasEnabledDepartures.has(cost.departure_id), novasTravellerService: 0, excursionCosts: 0, otherOperatingCosts: 0 };
     if (!cost.cost_type || cost.cost_type === 'excursion') current.excursionCosts += Number(cost.amount || 0); else current.otherOperatingCosts += Number(cost.amount || 0);
     groupedDepartures.set(key, current);
   }
@@ -89,7 +95,12 @@ export function calculateOperationalEconomics({ agencies = [], departures = [], 
   economicSummary.operatingExpenses = roundMoney(economicSummary.earnedCommission + economicSummary.novasTravellerService + economicSummary.excursionCosts + economicSummary.otherOperatingCosts);
   economicSummary.marginCollected = roundMoney(economicSummary.collected - economicSummary.operatingExpenses);
   const roundedAgencies = [...groupedAgencies.values()].map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'number' ? roundMoney(value) : value])));
-  return { summary: economicSummary, reservations: reservationRows, agencies: roundedAgencies, departures: departureRows, operatingCosts: validCosts, novasRutas: { agencyId: novas?.id || null, ratePerTraveller: novasRate, configured: Boolean(novasRule) } };
+  const payables = [
+    ...roundedAgencies.filter(row => row.pendingCommission > 0).map(row => ({ type: 'agency_commission', id: row.agencyId, payee: row.agencyName, concept: `Comisiones devengadas (${row.reservations} reservas / ${row.travellers} personas)`, due: row.earnedCommission, paid: row.paidCommission, pending: row.pendingCommission })),
+    ...departureRows.filter(row => row.novasTravellerService > 0).map(row => ({ type: 'novas_service', id: row.departureId, payee: 'Novas Rutas', concept: `${row.departureCode}: ${row.travellers} personas x ${novasRate.toFixed(2)} EUR`, due: row.novasTravellerService, paid: 0, pending: row.novasTravellerService }))
+  ];
+  economicSummary.pendingPayables = roundMoney(payables.reduce((total, row) => total + row.pending, 0));
+  return { summary: economicSummary, reservations: reservationRows, agencies: roundedAgencies, departures: departureRows, payables, operatingCosts: validCosts, novasRutas: { agencyId: novas?.id || null, ratePerTraveller: novasRate, configured: Boolean(novasRule) } };
 }
 
 function loadDotEnv() {
@@ -1151,7 +1162,7 @@ async function adminApi(req, res, url) {
         optionalSupa('pc_expenses', { query: { select: '*,pc_expense_categories(name),pc_entities(display_name)', order: 'expense_date.desc', limit: '200' } }),
         optionalSupa('documents', { query: { select: '*', document_type: 'eq.factura_gestoria', order: 'created_at.desc', limit: '500' } }),
         supa('agencies', { query: { select: 'id,agency_code,commercial_name,legal_name,default_commission_rate,access_status,contract_status,created_at', deleted_at: 'is.null', order: 'commercial_name.asc', limit: '500' } }),
-        supa('departures', { query: { select: 'id,departure_code,trip_name,origin_name,starts_at,ends_at,status', order: 'starts_at.asc', limit: '500' } }),
+        supa('departures', { query: { select: '*', order: 'starts_at.asc', limit: '500' } }),
         supa('reservations', { query: { deleted_at: 'is.null', select: '*,agencies(agency_code,commercial_name,default_commission_rate),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at,price_per_traveller)', order: 'created_at.desc', limit: '500' } }),
         supa('travellers', { query: { select: 'id,reservation_id,agency_id,first_name,last_name_1', order: 'created_at.asc', limit: '2000' } }),
         supa('payments', { query: { select: '*,agencies(agency_code,commercial_name),reservations(reservation_code,total_amount,paid_amount)', order: 'created_at.desc', limit: '500' } }),
@@ -1274,24 +1285,34 @@ async function adminApi(req, res, url) {
       return json(res, 400, { error: error.message || 'No se pudo restaurar la copia.' });
     }
   }
-  if (req.method === 'GET' && url.pathname.startsWith('/api/admin/export/')) {
-    const type = url.pathname.split('/').pop();
-    const stamp = new Date().toISOString().slice(0, 10);
-    if (type === 'agencies') {
-      const rows = await supa('agencies', { query: { select: '*', order: 'created_at.desc' } });
-      await audit(session, 'export_csv', 'agencies', null, { type });
-      return csv(res, `proyekta_agencias_${stamp}.csv`, rows);
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/economics\/departures\/[^/]+\/novas-rutas$/)) {
+    const id = url.pathname.split('/')[5];
+    const input = await bodyJson(req);
+    const enabled = input.enabled === true;
+    const concept = '[NOVAS_RUTAS_20_POR_PERSONA]';
+    const existing = (await optionalSupa('departure_operating_costs', { query: { departure_id: `eq.${id}`, concept: `eq.${concept}`, limit: '1' } }, []))[0];
+    if (existing) await supa('departure_operating_costs', { method: 'PATCH', query: { id: `eq.${existing.id}` }, body: { status: enabled ? 'confirmado' : 'cancelado' } });
+    else if (enabled) await supa('departure_operating_costs', { method: 'POST', body: [{ departure_id: id, concept, cost_type: 'servicio', amount: 0, status: 'confirmado', notes: 'Activa el cálculo automático de Novas Rutas a 20 EUR por viajero confirmado.' }] });
+    await audit(session, 'departure_novas_rutas_changed', 'departures', id, { enabled });
+    return json(res, 200, { ok: true, enabled });
+  }
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/economics\/commissions\/[^/]+\/paid$/)) {
+    const agencyId = url.pathname.split('/')[5];
+    const input = await bodyJson(req);
+    const rows = await supa('commissions', { query: { agency_id: `eq.${agencyId}`, order: 'created_at.asc' } });
+    let remaining = Math.max(0, roundMoney(input.amount));
+    if (!remaining) return json(res, 400, { error: 'Indica un importe válido.' });
+    for (const commission of rows) {
+      const available = Math.max(0, Number(commission.commission_amount || 0) - Number(commission.paid_amount || 0));
+      if (!available || !remaining) continue;
+      const applied = Math.min(available, remaining);
+      const paidAmount = roundMoney(Number(commission.paid_amount || 0) + applied);
+      await supa('commissions', { method: 'PATCH', query: { id: `eq.${commission.id}` }, body: { paid_amount: paidAmount, status: paidAmount >= Number(commission.commission_amount || 0) ? 'pagada' : 'pago_parcial' } });
+      remaining = roundMoney(remaining - applied);
     }
-    if (type === 'departures') {
-      const rows = await supa('departures', { query: { select: '*', order: 'starts_at.asc' } });
-      await audit(session, 'export_csv', 'departures', null, { type });
-      return csv(res, `proyekta_salidas_${stamp}.csv`, rows);
-    }
-    if (type === 'reservations') {
-      const rows = await supa('reservations', { query: { deleted_at: 'is.null', select: '*,agencies(agency_code,commercial_name),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } });
-      await audit(session, 'export_csv', 'reservations', null, { type });
-      return csv(res, `proyekta_reservas_${stamp}.csv`, flattenRows(rows));
-    }
+    await audit(session, 'agency_commission_paid', 'agencies', agencyId, { amount: roundMoney(input.amount), unapplied: remaining, reference: input.reference || null });
+    return json(res, 200, { ok: true, applied: roundMoney(Number(input.amount) - remaining), unapplied: remaining });
+  }
   if (req.method === 'POST' && url.pathname === '/api/admin/economics/operating-costs') {
     try {
       const input = await bodyJson(req);
@@ -1310,7 +1331,24 @@ async function adminApi(req, res, url) {
       throw error;
     }
   }
-
+  if (req.method === 'GET' && url.pathname.startsWith('/api/admin/export/')) {
+    const type = url.pathname.split('/').pop();
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (type === 'agencies') {
+      const rows = await supa('agencies', { query: { select: '*', order: 'created_at.desc' } });
+      await audit(session, 'export_csv', 'agencies', null, { type });
+      return csv(res, `proyekta_agencias_${stamp}.csv`, rows);
+    }
+    if (type === 'departures') {
+      const rows = await supa('departures', { query: { select: '*', order: 'starts_at.asc' } });
+      await audit(session, 'export_csv', 'departures', null, { type });
+      return csv(res, `proyekta_salidas_${stamp}.csv`, rows);
+    }
+    if (type === 'reservations') {
+      const rows = await supa('reservations', { query: { deleted_at: 'is.null', select: '*,agencies(agency_code,commercial_name),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } });
+      await audit(session, 'export_csv', 'reservations', null, { type });
+      return csv(res, `proyekta_reservas_${stamp}.csv`, flattenRows(rows));
+    }
   if (req.method === 'POST' && url.pathname === '/api/admin/backup/validate') {
     try {
       const input = await bodyJson(req);
