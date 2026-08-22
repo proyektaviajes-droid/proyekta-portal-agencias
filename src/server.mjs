@@ -1537,6 +1537,9 @@ async function serveStatic(req, res, url) {
     const file = await readFile(target);
     res.writeHead(200, {
       'content-type': mime(extname(target)),
+      'cache-control': 'no-store, no-cache, must-revalidate, max-age=0',
+      'pragma': 'no-cache',
+      'expires': '0',
       'x-content-type-options': 'nosniff',
       'x-frame-options': 'DENY',
       'referrer-policy': 'same-origin'
@@ -1544,7 +1547,7 @@ async function serveStatic(req, res, url) {
     res.end(file);
   } catch {
     const file = await readFile(join(publicDir, 'index.html'));
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store, no-cache, must-revalidate, max-age=0' });
     res.end(file);
   }
 }
