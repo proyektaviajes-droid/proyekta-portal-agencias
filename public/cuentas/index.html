@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Cuentas">
   <title>PROYEKTA CUENTAS</title>
   <link rel="manifest" href="/cuentas/manifest.webmanifest">
-  <link rel="stylesheet" href="/cuentas/styles.css?v=6">
+  <link rel="stylesheet" href="/cuentas/styles.css?v=7">
   <style>[hidden]{display:none!important}.attachment-box,.payments-box{margin-top:14px;padding:14px;border:1px solid #d9e0e8;border-radius:12px;background:#f8fafc}.attachment-box input{margin-top:8px}.attachment-actions,.payment-entry{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.attachment-actions button,.payment-entry button{padding:8px 12px}.payment-list{display:grid;gap:8px;margin:10px 0}.payment-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px;background:white;border-radius:8px}.payment-row button{color:#a21b1b}.payment-entry label{flex:1;min-width:120px}</style>
 </head>
 <body>
@@ -90,6 +90,25 @@
           <button id="addPayment" type="button">Añadir pago</button>
         </div>
       </section>
+      <section class="payments-box">
+        <strong>Estado documental unificado</strong>
+        <div class="form-grid">
+          <label>Tipo de documento<select id="documentType"><option>Factura recibida</option><option>Factura emitida</option><option>Ticket / justificante</option><option>Sin clasificar</option></select></label>
+          <label>Estado<select id="documentStatus"><option>Pendiente</option><option>Adjunto</option><option>Revisado</option><option>No necesario</option></select></label>
+        </div>
+      </section>
+      <section class="payments-box">
+        <strong>Información contable</strong>
+        <div class="form-grid">
+          <label>Tratamiento IVA<select id="taxMode"><option>IVA incluido</option><option>IVA no incluido</option><option>Exento</option><option>No sujeto</option></select></label>
+          <label>Deducibilidad<select id="deductibility"><option>Pendiente de asesoria</option><option>Deducible</option><option>No deducible</option><option>Parcialmente deducible</option></select></label>
+          <label>Porcentaje deducible<input id="deductiblePercent" type="number" min="0" max="100" step="1" value="0"></label>
+          <label>Retención %<input id="withholdingPercent" type="number" min="0" max="100" step="0.01" value="0"></label>
+          <label>Origen del dinero<select id="fundingSource"><option>Sin clasificar</option><option>Empresa</option><option>Personal</option></select></label>
+          <label>Reembolso<select id="reimbursementStatus"><option>No aplica</option><option>Pendiente de reembolso</option><option>Reembolsado</option></select></label>
+        </div>
+        <p id="accountingSummary"></p>
+      </section>
       <label>Factura / referencia<input id="invoice"></label>
       <label>Notas<textarea id="notes" rows="3"></textarea></label>
       <section class="attachment-box">
@@ -114,6 +133,6 @@
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>
-  <script type="module" src="/cuentas/app.js?v=6"></script>
+  <script type="module" src="/cuentas/app.js?v=7"></script>
 </body>
 </html>
