@@ -22,6 +22,9 @@ $('importButton').addEventListener('click',()=>$('importFile').click());
 $('importFile').addEventListener('change',importJson);
 $('exportButton').addEventListener('click',exportJson);
 $('syncButton').addEventListener('click',()=>centralSync(true));
+$('onlineLoginForm').addEventListener('submit',onlineLogin);
+$('closeOnlineLogin').addEventListener('click',()=>$('onlineLoginDialog').close());
+$('cancelOnlineLogin').addEventListener('click',()=>$('onlineLoginDialog').close());
 $('search').addEventListener('input',render);
 $('typeFilter').addEventListener('change',render);
 $('monthFilter').addEventListener('change',render);
@@ -52,7 +55,7 @@ async function centralSync(manual=false){
     if(!navigator.onLine)throw new Error('Sin Internet: puedes seguir trabajando; se sincronizará al recuperar conexión.');
     $('syncStatus').textContent='Sincronizando con la base central…';
     const first=await fetch('/api/admin/cuentas/snapshot',{credentials:'same-origin'});
-    if(first.status===401)throw new Error('Falta iniciar sesión como administrador en PROYEKTA CONTROL. Tus cambios continúan guardados aquí.');
+    if(first.status===401){recordSyncFailure('CUENTAS está trabajando sin conexión. Conecta la sesión online para sincronizar.');await persist();render();if(!$('onlineLoginDialog').open)$('onlineLoginDialog').showModal();return}
     const initial=await first.json();
     if(!first.ok)throw new Error(initial.error||'No se pudo leer la base central');
     db=mergeDb(db,normalize(initial));
@@ -63,6 +66,7 @@ async function centralSync(manual=false){
   }catch(error){recordSyncFailure(error.message);await persist();render();if(manual)toast(error.message)}
   finally{centralRunning=false;if(centralQueued){centralQueued=false;scheduleCentralSync(300)}}
 }
+async function onlineLogin(event){event.preventDefault();$('onlineLoginError').textContent='';const button=event.submitter;button.disabled=true;try{const response=await fetch('/api/auth/admin-login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({email:$('onlineEmail').value.trim(),password:$('onlinePassword').value})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Correo o contraseña incorrectos');$('onlinePassword').value='';$('onlineLoginDialog').close();syncMessage='';await centralSync(true)}catch(error){$('onlineLoginError').textContent=error.message}finally{button.disabled=false}}
 function scheduleCentralSync(delay=800){clearTimeout(centralTimer);centralTimer=setTimeout(()=>centralSync(),delay)}
 window.addEventListener('online',()=>{if(key)scheduleCentralSync(100)});
 window.addEventListener('offline',async()=>{if(!key)return;recordSyncFailure('Sin Internet: puedes trabajar normalmente. Los cambios se sincronizarán después.');await persist();render()});

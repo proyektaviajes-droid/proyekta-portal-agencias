@@ -93,6 +93,17 @@
     </form>
   </dialog>
 
+  <dialog id="onlineLoginDialog">
+    <form id="onlineLoginForm">
+      <div class="dialog-head"><h2>Sincronización online</h2><button type="button" id="closeOnlineLogin" class="icon">×</button></div>
+      <p>Identifícate en PROYEKTA CUENTAS para conectar este dispositivo con la base central.</p>
+      <label>Correo<input id="onlineEmail" type="email" value="proyektaviajes@gmail.com" autocomplete="username" required></label>
+      <label>Contraseña<input id="onlinePassword" type="password" autocomplete="current-password" required></label>
+      <p id="onlineLoginError" class="error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" id="cancelOnlineLogin">Seguir sin conexión</button><button class="primary" type="submit">Conectar Cuentas</button></div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status"></div>
   <script type="module" src="/cuentas/app.js"></script>
 </body>
