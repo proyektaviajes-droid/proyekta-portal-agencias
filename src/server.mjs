@@ -566,6 +566,16 @@ async function adminApi(req, res, url) {
     return json(res, 200, { request });
   }
 
+  if (req.method === 'DELETE' && url.pathname.match(/^\/api\/admin\/agency-requests\/[^/]+$/)) {
+    const requestId = url.pathname.split('/')[4];
+    const existing = (await optionalSupa('control_agencies', { query: { id: `eq.${requestId}`, deleted_at: 'is.null', limit: '1' } }, []))[0];
+    if (!existing) return json(res, 404, { error: 'Solicitud no encontrada' });
+    const deletedAt = new Date().toISOString();
+    await supa('control_agencies', { method: 'PATCH', query: { id: `eq.${requestId}` }, body: { status: 'descartada', deleted_at: deletedAt } });
+    await audit(session, 'agency_request_deleted', 'control_agencies', requestId, { deleted_at: deletedAt, previous_status: existing.status });
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/agency-requests\/[^/]+\/convert$/)) {
     const requestId = url.pathname.split('/')[4];
     const request = (await optionalSupa('control_agencies', { query: { id: `eq.${requestId}`, deleted_at: 'is.null', limit: '1' } }, []))[0];

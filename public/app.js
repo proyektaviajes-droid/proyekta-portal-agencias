@@ -596,6 +596,7 @@ function requestActions(request) {
     <button class="ghost" data-request-contact="${request.id}">Marcar contactada</button>
     <button class="ghost" data-request-convert="${request.id}">Crear agencia</button>
     <button class="ghost danger" data-request-discard="${request.id}">Descartar</button>
+    <button class="ghost danger" data-request-delete="${request.id}" data-request-name="${esc(request.name)}">Borrar</button>
   </div>`;
 }
 
@@ -608,6 +609,7 @@ function bindAdminRequestButtons(target) {
   target.querySelectorAll('[data-request-contact]').forEach(btn => btn.onclick = () => markAgencyRequestContacted(btn.dataset.requestContact));
   target.querySelectorAll('[data-request-convert]').forEach(btn => btn.onclick = () => convertAgencyRequest(btn.dataset.requestConvert));
   target.querySelectorAll('[data-request-discard]').forEach(btn => btn.onclick = () => discardAgencyRequest(btn.dataset.requestDiscard));
+  target.querySelectorAll('[data-request-delete]').forEach(btn => btn.onclick = () => deleteAgencyRequest(btn.dataset.requestDelete, btn.dataset.requestName));
   target.querySelectorAll('[data-lead-open]').forEach(btn => btn.onclick = () => {
     const lead = (state.adminLeads || []).find(l => String(l.id) === String(btn.dataset.leadOpen));
     if (lead) document.querySelector('#requestDetail').innerHTML = renderLeadDetail(lead);
@@ -702,6 +704,16 @@ async function discardAgencyRequest(id) {
   if (reason === null) return;
   await api(`/api/admin/agency-requests/${id}`, { method: 'PATCH', body: { action: 'discarded', note: reason } });
   adminView('adminRequests');
+}
+
+async function deleteAgencyRequest(id, name) {
+  if (!confirm(`Borrar la solicitud de ${name || 'esta agencia'}? Desaparecerá de Solicitudes, pero quedará constancia interna de la eliminación.`)) return;
+  try {
+    await api(`/api/admin/agency-requests/${id}`, { method: 'DELETE' });
+    await adminView('adminRequests');
+  } catch (err) {
+    alert('No se pudo borrar la solicitud: ' + err.message);
+  }
 }
 
 async function convertAgencyRequest(id) {
@@ -1650,7 +1662,6 @@ window.addEventListener('popstate', init);
 init().catch(err => {
   app.innerHTML = `<div class="panel"><h1>Error</h1><p class="danger">${esc(err.message)}</p></div>`;
 });
-
 
 
 
