@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import PDFDocument from 'pdfkit';
 
 const scrypt = promisify(scryptCb);
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -58,10 +59,11 @@ export function calculateOperationalEconomics({ agencies = [], departures = [], 
     const reservedTravellers = Math.max(0, Number(reservation.requested_places || 0));
     const registeredTravellers = travellersByReservation.get(reservation.id) || 0;
     const sales = Number(reservation.total_amount || 0), collected = Math.min(sales, Math.max(0, Number(reservation.paid_amount || 0)));
-    const rate = Math.max(0, Number(agency?.default_commission_rate || 0));
+    const rate = reservation.agency_id ? 0.10 : 0;
     const paidCommission = Math.max(0, Number(commissionByReservation.get(reservation.id)?.paid_amount || 0));
-    const earnedCommission = roundMoney(collected * rate);
-    return { reservationId: reservation.id, reservationCode: reservation.reservation_code, agencyId: reservation.agency_id || null, agencyName: agency?.commercial_name || 'Venta directa', departureId: reservation.departure_id || null, departureCode: departure?.departure_code || '', tripName: departure?.trip_name || '', status: reservation.status, reservedTravellers, registeredTravellers, missingTravellerRecords: Math.max(0, reservedTravellers - registeredTravellers), sales: roundMoney(sales), collected: roundMoney(collected), pendingCustomer: roundMoney(Math.max(0, sales - collected)), commissionRate: rate, projectedCommission: roundMoney(sales * rate), earnedCommission, paidCommission: roundMoney(paidCommission), pendingCommission: roundMoney(Math.max(0, earnedCommission - paidCommission)) };
+    const fullyPaid = sales > 0 && collected >= sales;
+    const earnedCommission = fullyPaid ? roundMoney(sales * rate) : 0;
+    return { reservationId: reservation.id, reservationCode: reservation.reservation_code, agencyId: reservation.agency_id || null, agencyName: agency?.commercial_name || 'Venta directa', departureId: reservation.departure_id || null, departureCode: departure?.departure_code || '', tripName: departure?.trip_name || '', status: reservation.status, reservedTravellers, registeredTravellers, missingTravellerRecords: Math.max(0, reservedTravellers - registeredTravellers), sales: roundMoney(sales), collected: roundMoney(collected), pendingCustomer: roundMoney(Math.max(0, sales - collected)), fullyPaid, commissionRate: rate, projectedCommission: roundMoney(sales * rate), earnedCommission, paidCommission: roundMoney(paidCommission), pendingCommission: roundMoney(Math.max(0, earnedCommission - paidCommission)) };
   });
   const groupedAgencies = new Map();
   for (const row of reservationRows) {
@@ -166,6 +168,75 @@ function binary(res, filename, mimeType, buffer) {
     'x-content-type-options': 'nosniff'
   });
   res.end(buffer);
+}
+
+export async function buildReservationConfirmationPdf({ reservation, payments = [] }) {
+  const doc = new PDFDocument({ size: 'A4', margins: { top: 48, right: 52, bottom: 52, left: 52 }, info: { Title: `Confirmación ${reservation.reservation_code}`, Author: 'PROYEKTA VIAJES' } });
+  const chunks = [];
+  doc.on('data', chunk => chunks.push(chunk));
+  const completed = new Promise((resolve, reject) => { doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject); });
+  const navy = '#173563', gold = '#c49a52', ink = '#17212b', muted = '#667085', pale = '#f4f6f8';
+  const total = roundMoney(reservation.total_amount || 0);
+  const paid = roundMoney(reservation.paid_amount || 0);
+  const pending = roundMoney(Math.max(0, total - paid));
+  const required = roundMoney(reservation.required_payment || 0);
+  const paymentKind = total > 0 && paid >= total ? 'PAGO COMPLETO' : required > 0 && paid >= required ? 'RESERVA / SEÑAL PAGADA' : paid > 0 ? 'PAGO PARCIAL' : 'PENDIENTE DE PAGO';
+  const departure = reservation.departures || {};
+  const agency = reservation.agencies || {};
+  const value = value => String(value ?? '').trim() || 'No consta';
+  const moneyPdf = amount => `${Number(amount || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR`;
+  const datePdf = input => input ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'long', timeZone: 'Europe/Madrid' }).format(new Date(input)) : 'No consta';
+  const row = (label, text, y, width = 230) => { doc.font('Helvetica-Bold').fontSize(9).fillColor(muted).text(label.toUpperCase(), 52, y, { width }); doc.font('Helvetica').fontSize(11).fillColor(ink).text(value(text), 52, y + 14, { width }); };
+
+  doc.rect(0, 0, 595.28, 118).fill(navy);
+  doc.rect(0, 114, 595.28, 4).fill(gold);
+  doc.font('Helvetica-Bold').fontSize(23).fillColor('#ffffff').text('PROYEKTA VIAJES', 52, 38);
+  doc.font('Helvetica').fontSize(9.5).fillColor('#e8edf5').text('Viajes que se recuerdan · reservas@proyektaviajes.es · proyektaviajes.es', 52, 72);
+  doc.font('Helvetica-Bold').fontSize(18).fillColor(navy).text('CONFIRMACIÓN DE RESERVA Y PAGO', 52, 145);
+  doc.font('Helvetica').fontSize(10).fillColor(muted).text(`Documento ${value(reservation.reservation_code)} · Emitido el ${datePdf(new Date())}`, 52, 172);
+
+  doc.roundedRect(52, 202, 491, 72, 8).fill(pale);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(muted).text('ESTADO DEL PAGO', 70, 220);
+  doc.font('Helvetica-Bold').fontSize(16).fillColor(navy).text(paymentKind, 70, 240);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(muted).text('PAGADO', 355, 220);
+  doc.font('Helvetica-Bold').fontSize(16).fillColor(navy).text(moneyPdf(paid), 355, 240, { width: 165, align: 'right' });
+
+  doc.font('Helvetica-Bold').fontSize(13).fillColor(navy).text('Datos de la reserva', 52, 302);
+  row('Código de reserva', reservation.reservation_code, 330);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(muted).text('TITULAR', 313, 330, { width: 230 });
+  doc.font('Helvetica').fontSize(11).fillColor(ink).text(value(reservation.lead_traveller_name), 313, 344, { width: 230 });
+  row('Viaje', departure.trip_name, 382);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(muted).text('SALIDA', 313, 382, { width: 230 });
+  doc.font('Helvetica').fontSize(11).fillColor(ink).text(`${value(departure.departure_code)} · ${datePdf(departure.starts_at)} - ${datePdf(departure.ends_at)}`, 313, 396, { width: 230 });
+  row('Número de viajeros', reservation.requested_places || 0, 438);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(muted).text('AGENCIA COLABORADORA', 313, 438, { width: 230 });
+  doc.font('Helvetica').fontSize(11).fillColor(ink).text(value(agency.commercial_name || 'Reserva directa'), 313, 452, { width: 230 });
+
+  doc.font('Helvetica-Bold').fontSize(13).fillColor(navy).text('Resumen económico', 52, 500);
+  const summaryY = 528;
+  [['Total reserva', total], ['Importe pagado', paid], ['Pendiente', pending]].forEach(([label, amount], index) => {
+    const x = 52 + index * 164;
+    doc.roundedRect(x, summaryY, 151, 58, 6).lineWidth(0.7).strokeColor('#d0d5dd').stroke();
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(muted).text(label.toUpperCase(), x + 12, summaryY + 12, { width: 127 });
+    doc.font('Helvetica-Bold').fontSize(14).fillColor(index === 2 && amount > 0 ? '#9b2c2c' : navy).text(moneyPdf(amount), x + 12, summaryY + 31, { width: 127 });
+  });
+
+  const validPayments = payments.filter(payment => !['anulado', 'rechazado'].includes(String(payment.status || '').toLowerCase()) && Number(payment.amount || 0) > 0);
+  doc.font('Helvetica-Bold').fontSize(13).fillColor(navy).text('Pagos registrados', 52, 618);
+  let y = 645;
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor(muted).text('FECHA', 52, y).text('CONCEPTO / REFERENCIA', 150, y).text('IMPORTE', 438, y, { width: 105, align: 'right' });
+  y += 18;
+  for (const payment of validPayments.slice(0, 5)) {
+    doc.moveTo(52, y - 5).lineTo(543, y - 5).lineWidth(0.5).strokeColor('#e4e7ec').stroke();
+    doc.font('Helvetica').fontSize(9.5).fillColor(ink).text(datePdf(payment.created_at), 52, y, { width: 90 });
+    doc.text(value(payment.concept || payment.external_reference || payment.method), 150, y, { width: 275 });
+    doc.font('Helvetica-Bold').text(moneyPdf(payment.amount), 438, y, { width: 105, align: 'right' });
+    y += 25;
+  }
+  if (!validPayments.length) doc.font('Helvetica').fontSize(10).fillColor(muted).text('No hay pagos contabilizados.', 52, y);
+  doc.font('Helvetica').fontSize(8.5).fillColor(muted).text('Este documento confirma los datos registrados en PROYEKTA VIAJES en la fecha de emisión. No sustituye una factura cuando esta resulte legalmente exigible.', 52, 770, { width: 491, align: 'center' });
+  doc.end();
+  return completed;
 }
 
 function sign(payload) {
@@ -278,7 +349,7 @@ async function syncAutomaticCommissions(economics, existingCommissions = []) {
     rate: row.commissionRate,
     base_amount: row.collected,
     commission_amount: row.earnedCommission,
-    status: row.collected <= 0 ? 'pendiente_devengo' : row.collected < row.sales ? 'devengo_parcial' : 'devengada'
+    status: row.fullyPaid ? 'devengada' : 'pendiente_pago_total'
   }));
   for (const row of rows) {
     const existing = existingByReservation.get(row.reservation_id);
@@ -1298,6 +1369,17 @@ async function adminApi(req, res, url) {
     await audit(session, 'departure_novas_rutas_changed', 'departures', id, { enabled });
     return json(res, 200, { ok: true, enabled });
   }
+
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+\/confirmation\.pdf$/)) {
+    const id = url.pathname.split('/')[4];
+    const reservation = await getReservationWithContext(id);
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const payments = await supa('payments', { query: { reservation_id: `eq.${id}`, order: 'created_at.asc' } });
+    const pdf = await buildReservationConfirmationPdf({ reservation, payments });
+    await audit(session, 'reservation_confirmation_downloaded', 'reservations', id, { paid_amount: reservation.paid_amount, total_amount: reservation.total_amount });
+    return binary(res, `Confirmacion_${safeFilename(reservation.reservation_code)}.pdf`, 'application/pdf', pdf);
+  }
+
   if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/economics\/commissions\/[^/]+\/paid$/)) {
     const agencyId = url.pathname.split('/')[5];
     const input = await bodyJson(req);

@@ -459,6 +459,7 @@ function reservationActions(r) {
     buttons.push(`<button data-res-action="confirm" data-id="${r.id}">Confirmar reserva</button>`);
   }
   buttons.push(`<button class="ghost" data-pay-instructions="${r.id}">Instrucciones pago</button>`);
+  buttons.push(`<a class="button-link" href="/api/admin/reservations/${r.id}/confirmation.pdf" target="_blank">Descargar confirmación PDF</a>`);
   if (r.status !== 'cancelada') {
     buttons.push(`<button data-confirm-paid="${r.id}">Confirmar y registrar pago</button>`);
     buttons.push(`<button class="ghost" data-register-admin-payment="${r.id}">Registrar pago</button>`);
@@ -1317,7 +1318,7 @@ function gestoriaProveedores(model) {
 function gestoriaLiquidaciones(model) {
   return html`
     <h3>Agencias, ventas y comisiones</h3>
-    <p class="muted">La comisión prevista se calcula sobre la venta. La devengada se calcula solo sobre lo que PROYEKTA ya ha cobrado.</p>
+    <p class="muted">La comisión es el 10 % del precio total de todos los viajeros. Solo se devenga cuando la reserva está pagada por completo; mientras falte algún importe, la comisión a pagar es 0 €.</p>
     ${table(['Agencia','Reservas','Personas','Ventas','Cobrado','Pendiente clientes','Comisión prevista','Comisión devengada','Comisión pagada','Pendiente liquidar','Acción'], model.economics.agencies.map(row => [
       row.agencyName, row.reservations, row.travellers, money(row.sales), money(row.collected), money(row.pendingCustomer), money(row.projectedCommission), money(row.earnedCommission), money(row.paidCommission), money(row.pendingCommission), row.pendingCommission > 0 && row.agencyId ? `<button data-pay-commission="${row.agencyId}" data-name="${esc(row.agencyName)}" data-pending="${row.pendingCommission}">Registrar pago</button>` : '—'
     ]))}

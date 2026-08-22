@@ -26,20 +26,28 @@ test('calcula reservas con varios viajeros y excluye canceladas', () => {
   assert.equal(result.summary.collected, 1200);
 });
 
-test('separa comisión prevista de comisión devengada por cobro', () => {
+test('no devenga comisión hasta que la reserva esté pagada por completo', () => {
   const result = calculateOperationalEconomics(data);
   const agency = result.agencies.find(row => row.agencyId === 'a1');
   assert.equal(agency.projectedCommission, 300);
-  assert.equal(agency.earnedCommission, 120);
+  assert.equal(agency.earnedCommission, 0);
   assert.equal(agency.pendingCustomer, 1800);
+});
+
+test('devenga el 10 por ciento del total al completar el pago', () => {
+  const paidData = { ...data, reservations: data.reservations.map(row => row.id === 'r1' ? { ...row, paid_amount: 3000 } : row) };
+  const result = calculateOperationalEconomics(paidData);
+  const agency = result.agencies.find(row => row.agencyId === 'a1');
+  assert.equal(agency.earnedCommission, 300);
+  assert.equal(agency.pendingCommission, 300);
 });
 
 test('Novas Rutas suma 20 euros por persona y excursiones reales', () => {
   const result = calculateOperationalEconomics(data);
   assert.equal(result.summary.novasTravellerService, 60);
   assert.equal(result.summary.excursionCosts, 450);
-  assert.equal(result.summary.operatingExpenses, 630);
-  assert.equal(result.departures[0].marginCollected, 570);
+  assert.equal(result.summary.operatingExpenses, 510);
+  assert.equal(result.departures[0].marginCollected, 690);
 });
 
 test('no cuenta solicitudes ni aplica Novas Rutas en salidas desactivadas', () => {
