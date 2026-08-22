@@ -660,11 +660,15 @@ async function adminApi(req, res, url) {
     }
     for (const item of (Array.isArray(input.history) ? input.history.slice(0, 5000) : [])) {
       const legacyId = cleanSyncId(item?.id); if (!legacyId) continue;
-      await supa('cuentas_history', { method: 'POST', query: { on_conflict: 'legacy_id' }, prefer: 'resolution=ignore-duplicates,return=minimal', body: [{ legacy_id: legacyId, payload: item, occurred_at: validSyncDate(item.at) }] });
+      const existing = await optionalSupa('cuentas_history', { query: { select: 'legacy_id', legacy_id: `eq.${legacyId}`, limit: '1' } }, []);
+      if (!existing.length) await supa('cuentas_history', { method: 'POST', prefer: 'return=minimal', body: [{ legacy_id: legacyId, payload: item, occurred_at: validSyncDate(item.at) }] });
     }
     for (const report of (Array.isArray(input.reimbursementReports) ? input.reimbursementReports.slice(0, 1000) : [])) {
       const legacyId = cleanSyncId(report?.id); if (!legacyId) continue;
-      await supa('cuentas_reimbursement_reports', { method: 'POST', query: { on_conflict: 'legacy_id' }, prefer: 'resolution=merge-duplicates,return=minimal', body: [{ legacy_id: legacyId, payload: report, updated_at: validSyncDate(report.updatedAt || report.createdAt || report.date) }] });
+      const body = { payload: report, updated_at: validSyncDate(report.updatedAt || report.createdAt || report.date) };
+      const existing = await optionalSupa('cuentas_reimbursement_reports', { query: { select: 'legacy_id', legacy_id: `eq.${legacyId}`, limit: '1' } }, []);
+      if (existing.length) await supa('cuentas_reimbursement_reports', { method: 'PATCH', query: { legacy_id: `eq.${legacyId}` }, prefer: 'return=minimal', body });
+      else await supa('cuentas_reimbursement_reports', { method: 'POST', prefer: 'return=minimal', body: [{ legacy_id: legacyId, ...body }] });
     }
     await optionalSupa('cuentas_sync_log', { method: 'POST', body: [{ device_id: deviceId, actor_id: session.userId, received: movements.length + Object.keys(deleted).length, accepted, conflicts }] }, []);
     await audit(session, 'cuentas_central_sync', 'cuentas', null, { deviceId, received: movements.length + Object.keys(deleted).length, accepted, conflicts });
