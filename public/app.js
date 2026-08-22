@@ -1311,8 +1311,9 @@ function gestoriaFacturasRecibidas(model) {
 function gestoriaProveedores(model) {
   const suppliers = (model.data.entities || []).filter(e => e.status !== 'inactiva');
   return html`
-    <h3>Proveedores y entidades</h3>
-    ${table(['Nombre','NIF/CIF','Email','Telefono','Estado'], suppliers.map(e => [e.display_name, e.tax_id || '', e.main_email || '', e.main_phone || '', badge(e.status)]))}
+    <h3>Maestro de agencias, hoteles y proveedores</h3>
+    <p class="muted">Las agencias se incorporan automáticamente. Añade aquí hoteles, transporte, restaurantes, guías, actividades y otros proveedores; Cuentas recibirá después los documentos contables, sin duplicar este control operativo.</p>
+    ${table(['Nombre','Categorías','NIF/CIF','Localidad','Contacto','Plazo pago','Estado'], suppliers.map(e => [e.display_name, (e.entity_category_links || []).map(x => x.entity_categories?.name).filter(Boolean).join(', ') || 'Sin clasificar', e.tax_id || '', [e.city,e.province].filter(Boolean).join(', '), [e.main_email,e.main_phone].filter(Boolean).join(' · '), `${e.default_payment_terms_days || 0} días`, badge(e.status)]))}
   `;
 }
 

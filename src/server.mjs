@@ -1302,8 +1302,9 @@ async function adminApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/admin/control/summary') {
     try {
+      await optionalSupa('rpc/sync_control_operativo', { method: 'POST', body: {} }, null);
       const [entities, categories, balances, cash, dueItems, tasks, documents, legacyExpenses, accountingFiles, agencies, departures, reservations, travellers, payments, cashMovements, economicRules, operatingCosts, commissions] = await Promise.all([
-        optionalSupa('entities', { query: { select: 'id,display_name,legal_name,tax_id,main_email,main_phone,status,created_at', order: 'created_at.desc', deleted_at: 'is.null', limit: '12' } }),
+        optionalSupa('entities', { query: { select: 'id,display_name,legal_name,tax_id,entity_kind,main_email,main_phone,city,province,bank_account,default_payment_terms_days,notes,status,created_at,entity_category_links(entity_categories(name))', order: 'display_name.asc', deleted_at: 'is.null', limit: '500' } }),
         optionalSupa('entity_categories', { query: { select: '*', order: 'name.asc' } }),
         optionalSupa('v_control_entity_balances', { query: { select: '*' } }),
         optionalSupa('v_control_cash_position', { query: { select: '*' } }),
