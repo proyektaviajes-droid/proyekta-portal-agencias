@@ -322,9 +322,10 @@ async function adminView(view) {
       });
       target.querySelectorAll('[data-accounting-upload]').forEach(btn => btn.onclick = () => uploadAccountingFile(btn.dataset.accountingUpload));
     } catch (err) {
+      const needsSetup = /falta ejecutar|relation|does not exist/i.test(String(err.message || ''));
       target.innerHTML = html`
         <h2>Control económico</h2>
-        <div class="notice">Esta parte necesita activar la base de datos económica. Ejecuta <strong>db/004_proyekta_control_core.sql</strong> y <strong>db/008_control_economico_automatico.sql</strong> en Supabase.</div>
+        <div class="notice ${needsSetup ? '' : 'danger'}">${needsSetup ? 'La base económica todavía no está activada en Supabase.' : 'No se ha podido cargar el Control económico. Tus datos no se han modificado.'}</div>
         <p class="muted">${esc(err.message)}</p>
       `;
     }
@@ -1013,18 +1014,19 @@ function accountingDocumentForm() {
 
 function gestoriaDashboard(data) {
   const model = buildGestoriaModel(data);
+  const economicSummary = model.economics.summary;
   return html`
     <div class="toolbar"><h2>Control económico</h2><div class="actions"><button id="printGestoria">Imprimir</button><button id="newOperatingCost">Añadir coste de excursión</button><button id="newAccountingDoc">Nuevo ingreso/gasto</button><button class="ghost" id="newEntity">Nueva entidad</button></div></div>
     <div class="grid gestoria-metrics">
-      ${metric('Ventas activas', money(model.economics.summary.sales))}
-      ${metric('Cobrado reservas', money(model.economics.summary.collected))}
-      ${metric('Pendiente clientes', money(model.economics.summary.pendingCustomer))}
-      ${metric('Comisiones devengadas', money(model.economics.summary.earnedCommission))}
-      ${metric('Costes operativos', money(model.economics.summary.operatingExpenses))}
-      ${metric('Margen sobre cobrado', money(model.economics.summary.marginCollected))}
+      ${metric('Ventas activas', money(economicSummary.sales))}
+      ${metric('Cobrado reservas', money(economicSummary.collected))}
+      ${metric('Pendiente clientes', money(economicSummary.pendingCustomer))}
+      ${metric('Comisiones devengadas', money(economicSummary.earnedCommission))}
+      ${metric('Costes operativos', money(economicSummary.operatingExpenses))}
+      ${metric('Margen sobre cobrado', money(economicSummary.marginCollected))}
     </div>
     <div id="accountingForm" class="panel hidden">${accountingDocumentForm()}</div>
-    <div class="notice"><strong>Novas Rutas:</strong> ${money(model.economics.novasRutas.ratePerTraveller)} por persona confirmada (${money(model.economics.summary.novasTravellerService)} acumulado), más ${money(model.economics.summary.excursionCosts)} de excursiones registradas.</div>
+    <div class="notice"><strong>Novas Rutas:</strong> ${money(model.economics.novasRutas.ratePerTraveller)} por persona confirmada (${money(economicSummary.novasTravellerService)} acumulado), más ${money(economicSummary.excursionCosts)} de excursiones registradas.</div>
     <div id="entityForm" class="panel hidden">${controlEntityForm(data.categories || [])}</div>
     <div class="gestoria-tabs">
     <div id="operatingCostForm" class="panel hidden">${operatingCostForm(data)}</div>
@@ -1067,7 +1069,8 @@ function showGestoriaTab(id) {
 
 function buildGestoriaModel(data) {
   const documents = data.documents || [];
-  const economics = data.economics || { summary: {}, reservations: [], agencies: [], departures: [], operatingCosts: [], novasRutas: { ratePerTraveller: 20 } };
+  const rawEconomics = data?.economics || {};
+  const economics = { ...rawEconomics, summary: rawEconomics.summary || {}, reservations: rawEconomics.reservations || [], agencies: rawEconomics.agencies || [], departures: rawEconomics.departures || [], operatingCosts: rawEconomics.operatingCosts || [], novasRutas: rawEconomics.novasRutas || { ratePerTraveller: 20 } };
   const realDocs = documents.filter(d => !['presupuesto', 'proforma'].includes(d.document_type) && !['borrador', 'cancelada'].includes(d.status));
   const incomeDocs = realDocs.filter(d => d.direction === 'ingreso');
   const expenseDocs = realDocs.filter(d => d.direction === 'gasto');
