@@ -1595,6 +1595,15 @@ async function agencyApi(req, res, url) {
     return json(res, 201, { payment });
   }
 
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/agency\/reservations\/[^/]+\/payment-instructions$/)) {
+    const id = url.pathname.split('/')[4];
+    const reservation = await getReservationWithContext(id);
+    if (!reservation || reservation.agency_id !== session.agencyId) return json(res, 404, { error: 'Reserva no encontrada' });
+    const instructions = buildPaymentInstructions(reservation);
+    await audit(session, 'agency_payment_instructions_generated', 'reservations', id, { pending_total: instructions.pendingTotal });
+    return json(res, 200, { instructions });
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/agency/incidents') {
     const input = await bodyJson(req);
     const code = `INC-${Date.now().toString(36).toUpperCase()}`;
@@ -1897,6 +1906,8 @@ function buildPaymentInstructions(reservation) {
   const requiredAmount = Number(reservation.required_payment || requiredPaymentForReservation(reservation));
   const paidAmount = Number(reservation.paid_amount || 0);
   const pendingAmount = Math.max(requiredAmount - paidAmount, 0);
+  const totalAmount = Number(reservation.total_amount || 0);
+  const pendingTotal = Math.max(totalAmount - paidAmount, 0);
   const concept = `${process.env.PAYMENT_CONCEPT_PREFIX || 'Reserva'} ${reservation.reservation_code}`;
   const recipientEmail = reservation.lead_traveller_email || reservation.agencies?.main_email || '';
   const lines = [
@@ -1912,6 +1923,7 @@ function buildPaymentInstructions(reservation) {
     `Importe minimo para confirmar: ${formatEuro(requiredAmount)}`,
     paidAmount > 0 ? `Ya verificado: ${formatEuro(paidAmount)}` : null,
     `Pendiente minimo ahora: ${formatEuro(pendingAmount)}`,
+    `Pendiente para pagar la reserva completa: ${formatEuro(pendingTotal)}`,
     '',
     'Transferencia bancaria:',
     `Titular: ${process.env.PAYMENT_ACCOUNT_NAME || 'PROYEKTA VIAJES'}`,
@@ -1921,7 +1933,7 @@ function buildPaymentInstructions(reservation) {
     '',
     'La reserva queda confirmada cuando PROYEKTA verifica el pago.'
   ].filter(Boolean);
-  return { text: lines.join('\n'), concept, requiredAmount, paidAmount, pendingAmount };
+  return { text: lines.join('\n'), concept, requiredAmount, paidAmount, pendingAmount, totalAmount, pendingTotal };
 }
 
 function formatEuro(value) {

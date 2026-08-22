@@ -880,8 +880,9 @@ async function agencyView(view) {
     document.querySelector('#createTraveller')?.addEventListener('submit', createTraveller);
   }
   if (view === 'agencyPayments') {
-    target.innerHTML = html`<h2>Comunicar transferencia</h2>${paymentForm(data.reservations)}${table(['Reserva','Importe','Estado','Referencia'], data.payments.map(p => [p.reservation_id, money(p.amount), badge(p.status), p.external_reference || '']))}`;
+    target.innerHTML = html`<h2>Pagos de reservas</h2><div class="notice">Selecciona el cliente y la reserva. Puedes preparar el importe restante y obtener los datos bancarios de PROYEKTA antes de comunicar la transferencia.</div>${paymentForm(data.reservations)}${table(['Reserva','Importe','Estado','Referencia'], data.payments.map(p => [p.reservation_id, money(p.amount), badge(p.status), p.external_reference || '']))}`;
     document.querySelector('#createPayment')?.addEventListener('submit', createPayment);
+    bindAgencyPaymentForm();
   }
   if (view === 'agencyIncidents') {
     target.innerHTML = html`<h2>Nueva incidencia</h2>${incidentForm(data.reservations)}${table(['Código','Categoría','Prioridad','Estado','Descripción'], data.incidents.map(i => [i.incident_code, i.category, i.priority, badge(i.status), i.description]))}`;
@@ -1616,13 +1617,55 @@ function travellerForm(reservations) {
 
 function paymentForm(reservations) {
   return `<form id="createPayment" class="panel form-grid">
-    ${reservationSelect(reservations)}
+    <label class="full">Cliente y reserva<select id="agencyPaymentReservation" name="reservationId" required><option value="">Selecciona</option>${reservations.map(r => `<option value="${r.id}" data-total="${Number(r.total_amount || 0)}" data-paid="${Number(r.paid_amount || 0)}" data-required="${Number(r.required_payment || 0)}" data-client="${esc(r.lead_traveller_name || 'Cliente sin nombre')}" data-code="${esc(r.reservation_code)}">${esc(r.lead_traveller_name || 'Cliente sin nombre')} · ${esc(r.reservation_code)} · ${money(r.total_amount)}</option>`).join('')}</select></label>
+    <div id="agencyPaymentSummary" class="notice full">Selecciona una reserva para ver lo pagado y lo pendiente.</div>
     ${input('payerName','Pagador')}
-    ${input('amount','Importe','number','300','0.01')}
+    <label>Importe<input id="agencyPaymentAmount" name="amount" type="number" min="0.01" step="0.01" required></label>
     ${input('externalReference','Referencia transferencia')}
     <label class="full">Concepto<textarea name="concept" placeholder="Reserva PV-2027-MAD-0001"></textarea></label>
-    <button class="full">Comunicar pago recibido</button>
+    <div class="actions full"><button id="prepareRemainingPayment" type="button">Preparar pago del resto</button><button id="showAgencyPaymentInstructions" type="button" class="ghost">Ver número de cuenta e instrucciones</button></div>
+    <pre id="agencyPaymentInstructions" class="panel full hidden" style="white-space:pre-wrap"></pre>
+    <button class="full">Comunicar transferencia realizada a PROYEKTA</button>
   </form>`;
+}
+
+function bindAgencyPaymentForm() {
+  const select = document.querySelector('#agencyPaymentReservation');
+  const amount = document.querySelector('#agencyPaymentAmount');
+  const summary = document.querySelector('#agencyPaymentSummary');
+  const instructions = document.querySelector('#agencyPaymentInstructions');
+  if (!select || !amount || !summary) return;
+  const selectedData = () => {
+    const option = select.selectedOptions[0];
+    const total = Number(option?.dataset.total || 0), paid = Number(option?.dataset.paid || 0);
+    return { option, total, paid, pending: Math.max(0, total - paid) };
+  };
+  const refresh = () => {
+    const { option, total, paid, pending } = selectedData();
+    summary.innerHTML = option?.value ? `<strong>${esc(option.dataset.client)}</strong> · Total ${money(total)} · Pagado y verificado ${money(paid)} · <strong>Pendiente ${money(pending)}</strong>` : 'Selecciona una reserva para ver lo pagado y lo pendiente.';
+    if (instructions) { instructions.textContent = ''; instructions.classList.add('hidden'); }
+  };
+  select.addEventListener('change', refresh);
+  document.querySelector('#prepareRemainingPayment')?.addEventListener('click', () => {
+    const { option, pending } = selectedData();
+    if (!option?.value) return alert('Selecciona primero el cliente y la reserva.');
+    if (pending <= 0) return alert('Esta reserva ya está pagada por completo.');
+    amount.value = pending.toFixed(2);
+    const concept = document.querySelector('#createPayment [name="concept"]');
+    if (concept) concept.value = `Resto reserva ${option.dataset.code}`;
+  });
+  document.querySelector('#showAgencyPaymentInstructions')?.addEventListener('click', async () => {
+    const { option } = selectedData();
+    if (!option?.value) return alert('Selecciona primero el cliente y la reserva.');
+    try {
+      const data = await api(`/api/agency/reservations/${option.value}/payment-instructions`, { method: 'POST' });
+      instructions.textContent = data.instructions.text;
+      instructions.classList.remove('hidden');
+    } catch (err) {
+      alert('No se pudieron obtener las instrucciones: ' + err.message);
+    }
+  });
+  refresh();
 }
 
 function incidentForm(reservations) {
