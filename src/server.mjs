@@ -1592,7 +1592,11 @@ async function agencyApi(req, res, url) {
       external_reference: input.externalReference || null
     }] }))[0];
     await audit(session, 'payment_reported', 'payments', payment.id);
-    return json(res, 201, { payment });
+    const emailSent = await notifyPaymentReported(payment, reservation, session).catch(error => {
+      console.error('No se pudo notificar el pago por correo:', error);
+      return false;
+    });
+    return json(res, 201, { payment, emailSent });
   }
 
   if (req.method === 'POST' && url.pathname.match(/^\/api\/agency\/reservations\/[^/]+\/payment-instructions$/)) {
@@ -1934,6 +1938,40 @@ function buildPaymentInstructions(reservation) {
     'La reserva queda confirmada cuando PROYEKTA verifica el pago.'
   ].filter(Boolean);
   return { text: lines.join('\n'), concept, requiredAmount, paidAmount, pendingAmount, totalAmount, pendingTotal };
+}
+
+async function notifyPaymentReported(payment, reservation, session) {
+  const agency = reservation.agencies?.commercial_name || session.agencyCode || '';
+  const subject = `Transferencia comunicada - ${reservation.reservation_code} - ${formatEuro(payment.amount)}`;
+  const body = [
+    'Una agencia ha comunicado una transferencia en el portal PROYEKTA.',
+    '',
+    `Agencia: ${agency}`,
+    `Reserva: ${reservation.reservation_code}`,
+    `Cliente / titular: ${reservation.lead_traveller_name || payment.payer_name || ''}`,
+    `Pagador: ${payment.payer_name || ''}`,
+    `Importe comunicado: ${formatEuro(payment.amount)}`,
+    `Referencia: ${payment.external_reference || 'No indicada'}`,
+    `Concepto: ${payment.concept || ''}`,
+    '',
+    'IMPORTANTE: este pago todavía no está contabilizado.',
+    'Entra en PROYEKTA CONTROL > Pagos, comprueba el ingreso bancario y pulsa Verificar.'
+  ].join('\n');
+
+  let sent = false;
+  let status = 'pendiente_envio';
+  if (process.env.RESEND_API_KEY) {
+    sent = await sendOperationalEmail({ subject, text: body }).catch(error => {
+      console.error('Error de Resend al notificar el pago:', error);
+      return false;
+    });
+    status = sent ? 'enviado' : 'pendiente_envio';
+  }
+  await supa('notifications', {
+    method: 'POST',
+    body: [{ agency_id: reservation.agency_id, channel: 'email', template_key: 'payment_reported', subject, body, status, sent_at: sent ? new Date().toISOString() : null }]
+  });
+  return sent;
 }
 
 function formatEuro(value) {
