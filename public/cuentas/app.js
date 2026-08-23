@@ -7,11 +7,12 @@ let pendingPayments=[];
 const DEVICE_KEY='proyekta_cuentas_device_id';
 let centralTimer=null,centralRunning=false,centralQueued=false;
 let syncMessage='';
+let toastTimer=null;
 const $=id=>document.getElementById(id);
 const money=new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'});
 const today=()=>new Date().toISOString().slice(0,10);
 
-if('serviceWorker'in navigator)navigator.serviceWorker.register('/cuentas/sw.js?v=7',{scope:'/cuentas/'}).catch(()=>{});
+if('serviceWorker'in navigator)navigator.serviceWorker.register('/cuentas/sw.js?v=8',{scope:'/cuentas/'}).catch(()=>{});
 $('lockHelp').textContent=localStorage.getItem(STORAGE)?'Introduce el PIN creado en este dispositivo.':'Crea un PIN de al menos 6 caracteres. Los datos quedarán cifrados en este dispositivo.';
 
 $('unlockForm').addEventListener('submit',async e=>{e.preventDefault();$('lockError').textContent='';const pin=$('pin').value;if(pin.length<6){$('lockError').textContent='El PIN debe tener al menos 6 caracteres.';return}try{const saved=localStorage.getItem(STORAGE);if(saved){const packet=JSON.parse(saved);key=await derive(pin,from64(packet.salt));try{db=JSON.parse(await decrypt(packet,key))}catch(primaryError){const backup=localStorage.getItem(STORAGE_BACKUP);if(!backup)throw primaryError;db=JSON.parse(await decrypt(JSON.parse(backup),key));localStorage.setItem(STORAGE,backup);syncMessage='Se recuperó automáticamente la última copia local válida.'}}else{const salt=crypto.getRandomValues(new Uint8Array(16));key=await derive(pin,salt);db=emptyDb();await persist(salt)}db=normalize(db);$('pin').value='';$('lock').hidden=true;$('app').hidden=false;render();if(navigator.onLine)await centralSync();else{recordSyncFailure('Sin Internet: puedes trabajar normalmente. Los cambios quedan pendientes.');await persist();render()}}catch{$('lockError').textContent='PIN incorrecto o datos dañados.'}});
@@ -108,4 +109,4 @@ function blobToDataUrl(blob){return new Promise((resolve,reject)=>{const reader=
 function dataUrlToBlob(value,fallbackType){const match=String(value).match(/^data:([^;,]+)?;base64,(.+)$/);if(!match)throw new Error('Justificante codificado incorrectamente');const bytes=from64(match[2]);return new Blob([bytes],{type:match[1]||fallbackType||'application/octet-stream'})}
 function safeName(name){return String(name||'justificante').replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').slice(0,120)}
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
-let toastTimer;function toast(text){$('toast').textContent=text;$('toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('show'),3500)}
+function toast(text){$('toast').textContent=text;$('toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('show'),3500)}
