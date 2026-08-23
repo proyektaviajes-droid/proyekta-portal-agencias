@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 
 const scrypt = promisify(scryptCb);
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -188,6 +188,15 @@ export async function buildReservationConfirmationPdf({ reservation, payments = 
   const muted = rgb(100 / 255, 116 / 255, 139 / 255);
   const pale = rgb(244 / 255, 247 / 255, 250 / 255);
   const danger = rgb(153 / 255, 45 / 255, 45 / 255);
+  page.drawText('PROYEKTA VIAJES', {
+    x: 105,
+    y: 315,
+    font: bold,
+    size: 48,
+    color: navy,
+    rotate: degrees(32),
+    opacity: 0.08
+  });
   const total = roundMoney(reservation.total_amount || 0);
   const paid = roundMoney(reservation.paid_amount || 0);
   const pending = roundMoney(Math.max(0, total - paid));
