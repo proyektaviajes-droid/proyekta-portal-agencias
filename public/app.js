@@ -23,6 +23,7 @@ async function init() {
   const path = location.pathname.replace(/\/+$/, '') || '/';
 
   if (path === '/crear-contrasena') return renderSetPassword();
+  if (path === '/recuperar-contrasena') return renderPasswordResetRequest();
   if (path === '/admin') {
     if (!state.session) return renderAdminLoginOnly();
     if (state.session.type === 'admin') return renderAdmin();
@@ -141,7 +142,12 @@ async function submitAdminLogin(e) {
 
 function renderSetPassword() {
   useTemplate('#setPasswordTpl');
-  const token = new URLSearchParams(location.search.slice(1) || '').get('token');
+  const params = new URLSearchParams(location.search.slice(1) || '');
+  const token = params.get('token');
+  if (params.get('modo') === 'recuperacion') {
+    document.querySelector('#setPasswordForm h1').textContent = 'Crear nueva contraseña';
+    document.querySelector('#setPasswordForm button').textContent = 'Cambiar contraseña';
+  }
   document.querySelector('#setPasswordForm').addEventListener('submit', async e => {
     e.preventDefault();
     try {
@@ -150,6 +156,26 @@ function renderSetPassword() {
       history.replaceState(null, '', '/acceso');
       renderAgencyLoginOnly();
     } catch (err) { alert(err.message); }
+  });
+}
+
+function renderPasswordResetRequest() {
+  useTemplate('#resetPasswordRequestTpl');
+  document.querySelector('#resetPasswordRequestForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const button = form.querySelector('button');
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      button.disabled = true;
+      button.textContent = 'Enviando...';
+      const result = await api('/api/auth/agency-password-reset-request', { method: 'POST', body: data });
+      form.innerHTML = `<h1>Revisa tu correo</h1><p class="muted">${esc(result.message)}</p><a class="button-link" href="/acceso">Volver al acceso</a>`;
+    } catch (err) {
+      alert(err.message);
+      button.disabled = false;
+      button.textContent = 'Enviar enlace de recuperación';
+    }
   });
 }
 

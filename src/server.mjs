@@ -19,6 +19,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const ACCOUNTING_BUCKET = process.env.ACCOUNTING_BUCKET || 'proyekta-accounting';
+const passwordResetAttempts = new Map();
 
 if (isMain && (!SUPABASE_URL || !SERVICE_KEY || SESSION_SECRET.length < 32)) {
   console.warn('Faltan variables: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY o SESSION_SECRET largo.');
@@ -405,12 +406,67 @@ async function api(req, res, url) {
       const agencies = await supa('agencies', { query: { agency_code: `eq.${agencyCode}`, access_status: 'eq.activa', deleted_at: 'is.null', limit: '1' } });
       const agency = agencies[0];
       if (!agency) return json(res, 401, { error: 'Credenciales incorrectas' });
-      const users = await supa('agency_users', { query: { agency_id: `eq.${agency.id}`, is_active: 'eq.true', limit: '1' } });
-      const user = users[0];
-      if (!user || !(await verifyPassword(password, user.password_hash))) return json(res, 401, { error: 'Credenciales incorrectas' });
+      const users = await supa('agency_users', { query: { agency_id: `eq.${agency.id}`, is_active: 'eq.true', limit: '50' } });
+      let user = null;
+      for (const candidate of users) {
+        if (await verifyPassword(password, candidate.password_hash)) { user = candidate; break; }
+      }
+      if (!user) return json(res, 401, { error: 'Credenciales incorrectas' });
       setSession(res, { type: 'agency', userId: user.id, agencyId: agency.id, agencyCode: agency.agency_code, name: user.name, email: user.email });
       await audit({ type: 'agency', userId: user.id, agencyId: agency.id }, 'agency_login', 'agency_users', user.id);
       return json(res, 200, { ok: true, session: { type: 'agency', agency: agency.commercial_name, agencyCode: agency.agency_code } });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/auth/agency-password-reset-request') {
+      const input = await bodyJson(req);
+      const agencyCode = String(input.agencyCode || '').trim().toUpperCase();
+      const email = String(input.email || '').trim().toLowerCase();
+      const genericResponse = { ok: true, message: 'Si los datos coinciden con una cuenta activa, recibirás un correo con el enlace de recuperación.' };
+      if (!agencyCode || agencyCode.length > 30 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, 200, genericResponse);
+      const attemptKey = `${req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown'}:${agencyCode}:${email}`;
+      if (!allowPasswordResetAttempt(attemptKey)) return json(res, 200, genericResponse);
+
+      const agencies = await supa('agencies', { query: { agency_code: `eq.${agencyCode}`, access_status: 'eq.activa', deleted_at: 'is.null', limit: '1' } });
+      const agency = agencies[0];
+      if (!agency) return json(res, 200, genericResponse);
+      const users = await supa('agency_users', { query: { agency_id: `eq.${agency.id}`, email: `ilike.${email}`, is_active: 'eq.true', limit: '1' } });
+      const user = users[0];
+      if (!user) return json(res, 200, genericResponse);
+
+      const token = randomBytes(32).toString('base64url');
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      await supa('agency_users', {
+        method: 'PATCH',
+        query: { id: `eq.${user.id}` },
+        body: { invitation_token_hash: sha256(token), invited_at: new Date().toISOString(), invitation_expires_at: expiresAt }
+      });
+      const baseUrl = process.env.PUBLIC_BASE_URL || 'https://agencias.proyektaviajes.es';
+      const resetUrl = `${baseUrl.replace(/\/$/, '')}/crear-contrasena?token=${encodeURIComponent(token)}&modo=recuperacion`;
+      const subject = 'Recuperar contraseña - PROYEKTA VIAJES';
+      const text = [
+        `Hola ${user.name || agency.commercial_name},`,
+        '',
+        'Hemos recibido una solicitud para cambiar la contraseña de acceso de tu agencia.',
+        `Agencia: ${agency.commercial_name}`,
+        `Código: ${agency.agency_code}`,
+        '',
+        `Crea una nueva contraseña desde este enlace: ${resetUrl}`,
+        '',
+        'El enlace caduca en una hora y solo puede utilizarse una vez.',
+        'Si no solicitaste este cambio, ignora este correo. Tu contraseña actual seguirá funcionando.',
+        '',
+        'PROYEKTA VIAJES'
+      ].join('\n');
+      let status = 'pendiente';
+      if (process.env.RESEND_API_KEY) {
+        status = await sendAgencyEmail({ to: user.email, subject, text }).then(() => 'enviado').catch(error => {
+          console.error('No se pudo enviar la recuperacion de contraseña:', error);
+          return 'pendiente_envio';
+        });
+      }
+      await optionalSupa('notifications', { method: 'POST', body: [{ agency_id: agency.id, user_id: user.id, channel: 'email', template_key: 'agency_password_reset', subject, body: text, status }] }, null);
+      await audit({ type: 'public', userId: user.id, agencyId: agency.id }, 'agency_password_reset_requested', 'agency_users', user.id);
+      return json(res, 200, genericResponse);
     }
 
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
@@ -439,6 +495,7 @@ async function api(req, res, url) {
       const password_hash = await hashPassword(password);
       await supa('agency_users', { method: 'PATCH', query: { id: `eq.${user.id}` }, body: { password_hash, password_set_at: new Date().toISOString(), invitation_token_hash: null, invitation_expires_at: null } });
       await supa('agencies', { method: 'PATCH', query: { id: `eq.${user.agency_id}` }, body: { access_status: 'activa' } });
+      await audit({ type: 'public', userId: user.id, agencyId: user.agency_id }, 'agency_password_changed_with_token', 'agency_users', user.id);
       return json(res, 200, { ok: true });
     }
 
@@ -548,6 +605,15 @@ async function createPublicAgencyRequest(req, res) {
   }, null);
 
   return json(res, 201, { ok: true, lead, request, emailSent });
+}
+
+function allowPasswordResetAttempt(key, now = Date.now()) {
+  const windowMs = 15 * 60 * 1000;
+  const previous = (passwordResetAttempts.get(key) || []).filter(timestamp => now - timestamp < windowMs);
+  if (previous.length >= 3) return false;
+  previous.push(now);
+  passwordResetAttempts.set(key, previous);
+  return true;
 }
 
 async function contractsApi(req, res, url) {

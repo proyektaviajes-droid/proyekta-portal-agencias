@@ -28,6 +28,7 @@
           <label>Codigo de agencia<input name="agencyCode" autocomplete="username" placeholder="AG-0001" required></label>
           <label>Contrasena<input name="password" type="password" autocomplete="current-password" required></label>
           <button>Entrar como agencia</button>
+          <a class="button-link" href="/recuperar-contrasena">He olvidado mi contraseña</a>
         </form>
         <form class="panel" id="adminLogin">
           <h1>Administracion</h1>
@@ -46,6 +47,17 @@
           </div>
         </section>
       </section>
+    </template>
+
+    <template id="resetPasswordRequestTpl">
+      <form class="panel narrow" id="resetPasswordRequestForm">
+        <h1>Recuperar contraseña</h1>
+        <p class="muted">Introduce el código de agencia y el correo asociado a tu acceso. No se creará una cuenta nueva ni se perderán datos.</p>
+        <label>Código de agencia<input name="agencyCode" autocomplete="username" placeholder="AG-0001" required></label>
+        <label>Correo asociado<input name="email" type="email" autocomplete="email" required></label>
+        <button>Enviar enlace de recuperación</button>
+        <a class="button-link" href="/acceso">Volver al acceso</a>
+      </form>
     </template>
 
     <template id="setPasswordTpl">
