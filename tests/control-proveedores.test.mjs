@@ -22,4 +22,5 @@ test('Control registra costes por proveedor y salida', () => {
 test('Control permite editar proveedores sin borrar su historial', () => {
   assert.match(server, /control_entity_updated/);
   assert.match(control, /method:state\.editing\?'PATCH':'POST'/);
+  assert.match(control, /entity = entity \|\| \{\}/);
 });
