@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $projectDir = Split-Path -Parent $PSScriptRoot
 $renderUrl = 'https://proyekta-portal-agencias.onrender.com/'
 $publicUrl = 'https://agencias.proyektaviajes.es/'
-$adminUrl = 'https://agencias.proyektaviajes.es/admin'
+$controlUrl = 'https://agencias.proyektaviajes.es/control.html'
 $logDir = Join-Path $projectDir 'logs'
 $logFile = Join-Path $logDir 'arranque-proyekta-control.log'
 
@@ -24,9 +24,20 @@ function Test-Web([string]$Url, [int]$TimeoutSeconds = 5) {
   }
 }
 
+function Test-ControlPublicado {
+  try {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $controlUrl -Method Get -TimeoutSec 10
+    return ($response.StatusCode -eq 200 -and $response.Content -match '<title>PROYEKTA CONTROL</title>')
+  } catch {
+    return $false
+  }
+}
+
 function Wait-Web([string]$Url, [int]$MaxSeconds, [string]$Description) {
   $started = Get-Date
+  $attempt = 0
   do {
+    $attempt++
     if (Test-Web -Url $Url) {
       $elapsed = [int]((Get-Date) - $started).TotalSeconds
       Write-Log "$Description disponible (${elapsed}s)."
@@ -40,11 +51,16 @@ function Wait-Web([string]$Url, [int]$MaxSeconds, [string]$Description) {
 }
 
 Write-Log 'Inicio solicitado desde el Escritorio.'
+
 Write-Log 'Despertando y comprobando el servicio de Render...'
 try { Invoke-WebRequest -UseBasicParsing -Uri $publicUrl -Method Get -TimeoutSec 8 | Out-Null } catch {}
 if (-not (Wait-Web -Url $renderUrl -MaxSeconds 180 -Description 'Render')) {
   throw 'Render no ha respondido en 3 minutos. Comprueba Internet o el estado del servicio y vuelve a intentarlo.'
 }
 
-Write-Log 'Administracion real preparada. Abriendo PROYEKTA CONTROL conectado.'
-Start-Process $adminUrl
+if (-not (Test-ControlPublicado)) {
+  throw 'La version central de PROYEKTA CONTROL todavia no esta publicada. Se ha detenido la apertura para no mostrar por error la portada de agencias.'
+}
+
+Write-Log 'Base central preparada. Abriendo PROYEKTA CONTROL de proveedores y costes.'
+Start-Process $controlUrl

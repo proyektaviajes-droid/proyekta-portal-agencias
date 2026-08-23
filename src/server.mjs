@@ -1481,7 +1481,7 @@ async function adminApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/admin/control/entities') {
     try {
-      const entities = await supa('entities', { query: { select: '*,entity_category_links(entity_categories(name))', order: 'created_at.desc', deleted_at: 'is.null' } });
+      const entities = await supa('entities', { query: { select: '*,entity_category_links(category_id,entity_categories(id,name))', order: 'created_at.desc', deleted_at: 'is.null' } });
       return json(res, 200, { entities });
     } catch (error) {
       if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
@@ -1507,6 +1507,70 @@ async function adminApi(req, res, url) {
       }
       await audit(session, 'control_entity_created', 'entities', entity.id);
       return json(res, 201, { entity });
+    } catch (error) {
+      if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
+      throw error;
+    }
+  }
+
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/control\/entities\/[^/]+$/)) {
+    try {
+      const id = url.pathname.split('/')[5];
+      const input = await bodyJson(req);
+      const entity = (await supa('entities', {
+        method: 'PATCH',
+        query: { id: `eq.${id}`, deleted_at: 'is.null' },
+        body: normalizeControlEntity(input)
+      }))[0];
+      if (!entity) return json(res, 404, { error: 'Proveedor no encontrado' });
+      if (input.categoryId) {
+        await optionalSupa('entity_category_links', { method: 'DELETE', query: { entity_id: `eq.${id}` } }, null);
+        await supa('entity_category_links', { method: 'POST', body: [{ entity_id: id, category_id: input.categoryId }] });
+      }
+      await audit(session, 'control_entity_updated', 'entities', id);
+      return json(res, 200, { entity });
+    } catch (error) {
+      if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
+      throw error;
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/admin/control/provider-costs') {
+    try {
+      const input = await bodyJson(req);
+      const amount = roundMoney(input.amount);
+      const paidAmount = Math.min(amount, Math.max(0, roundMoney(input.paidAmount || 0)));
+      if (!input.entityId) return json(res, 400, { error: 'Selecciona un proveedor.' });
+      if (!input.departureId) return json(res, 400, { error: 'Selecciona la salida a la que corresponde el coste.' });
+      if (!input.concept || amount <= 0) return json(res, 400, { error: 'Indica concepto e importe válido.' });
+      const issueDate = input.issueDate || new Date().toISOString().slice(0, 10);
+      const dueDate = input.dueDate || issueDate;
+      const document = (await supa('economic_documents', {
+        method: 'POST',
+        body: [{
+          document_code: nextAccountingDocumentCode('gasto', issueDate),
+          document_type: 'factura_recibida',
+          direction: 'gasto',
+          entity_id: input.entityId,
+          departure_id: input.departureId,
+          issue_date: issueDate,
+          due_date: dueDate,
+          tax_base: amount,
+          tax_amount: 0,
+          total_amount: amount,
+          paid_amount: 0,
+          status: 'recibida',
+          concept: input.concept,
+          notes: `[CONTROL_PROVEEDOR][TIPO:${input.costType || 'otro'}] ${input.notes || ''}`.trim()
+        }]
+      }))[0];
+      await supa('economic_document_lines', { method: 'POST', body: [{ document_id: document.id, description: input.concept, quantity: 1, unit_price: amount, tax_rate: 0 }] });
+      await supa('due_items', { method: 'POST', body: [{ document_id: document.id, entity_id: input.entityId, direction: 'pagar', due_date: dueDate, amount, paid_amount: 0, status: 'pendiente', notes: input.notes || null }] });
+      const recorded = paidAmount > 0
+        ? await markAccountingDocumentPaid(document.id, { amount: paidAmount, movementDate: issueDate, concept: input.concept }, session)
+        : document;
+      await audit(session, 'control_provider_cost_created', 'economic_documents', document.id, { entity_id: input.entityId, departure_id: input.departureId, amount, paid_amount: paidAmount });
+      return json(res, 201, { cost: recorded });
     } catch (error) {
       if (isMissingControlSchema(error)) return json(res, 424, { setupRequired: true, error: 'Falta ejecutar db/004_proyekta_control_core.sql en Supabase.' });
       throw error;
