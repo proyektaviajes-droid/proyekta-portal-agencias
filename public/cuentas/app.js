@@ -12,7 +12,7 @@ const $=id=>document.getElementById(id);
 const money=new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'});
 const today=()=>new Date().toISOString().slice(0,10);
 
-if('serviceWorker'in navigator)navigator.serviceWorker.register('/cuentas/sw.js?v=8',{scope:'/cuentas/'}).catch(()=>{});
+if('serviceWorker'in navigator)navigator.serviceWorker.register('/cuentas/sw.js?v=9',{scope:'/cuentas/'}).catch(()=>{});
 $('lockHelp').textContent=localStorage.getItem(STORAGE)?'Introduce el PIN creado en este dispositivo.':'Crea un PIN de al menos 6 caracteres. Los datos quedarán cifrados en este dispositivo.';
 
 $('unlockForm').addEventListener('submit',async e=>{e.preventDefault();$('lockError').textContent='';const pin=$('pin').value;if(pin.length<6){$('lockError').textContent='El PIN debe tener al menos 6 caracteres.';return}try{const saved=localStorage.getItem(STORAGE);if(saved){const packet=JSON.parse(saved);key=await derive(pin,from64(packet.salt));try{db=JSON.parse(await decrypt(packet,key))}catch(primaryError){const backup=localStorage.getItem(STORAGE_BACKUP);if(!backup)throw primaryError;db=JSON.parse(await decrypt(JSON.parse(backup),key));localStorage.setItem(STORAGE,backup);syncMessage='Se recuperó automáticamente la última copia local válida.'}}else{const salt=crypto.getRandomValues(new Uint8Array(16));key=await derive(pin,salt);db=emptyDb();await persist(salt)}db=normalize(db);$('pin').value='';$('lock').hidden=true;$('app').hidden=false;render();if(navigator.onLine)await centralSync();else{recordSyncFailure('Sin Internet: puedes trabajar normalmente. Los cambios quedan pendientes.');await persist();render()}}catch{$('lockError').textContent='PIN incorrecto o datos dañados.'}});
