@@ -511,7 +511,43 @@ async function createPublicAgencyRequest(req, res) {
     control_agency_id: request?.id || null
   });
 
-  return json(res, 201, { ok: true, lead, request });
+  const subject = `Nueva solicitud de agencia - ${agencyName}`;
+  const notificationBody = [
+    'Nueva solicitud de colaboracion recibida en PROYEKTA VIAJES.',
+    '',
+    `Codigo: ${leadCode}`,
+    `Agencia: ${agencyName}`,
+    `Persona de contacto: ${contactName}`,
+    `Email: ${email}`,
+    `Telefono: ${phone || 'No indicado'}`,
+    `Zona: ${zone || 'No indicada'}`,
+    `Mensaje: ${message || 'Sin mensaje'}`,
+    '',
+    'Siguiente paso: entrar en Administracion > Solicitudes y revisar la ficha.'
+  ].join('\n');
+  const recipient = process.env.AGENCY_REQUEST_NOTIFY_EMAIL || 'jon@proyektaviajes.es';
+  let emailSent = false;
+  let notificationStatus = 'pendiente';
+  if (process.env.RESEND_API_KEY) {
+    emailSent = await sendAgencyEmail({ to: recipient, subject, text: notificationBody }).then(() => true).catch(error => {
+      console.error('No se pudo enviar el aviso de nueva solicitud de agencia:', error);
+      return false;
+    });
+    notificationStatus = emailSent ? 'enviado' : 'pendiente_envio';
+  }
+  await optionalSupa('notifications', {
+    method: 'POST',
+    body: [{
+      agency_id: null,
+      channel: 'email',
+      template_key: 'public_agency_request_created',
+      subject,
+      body: notificationBody,
+      status: notificationStatus
+    }]
+  }, null);
+
+  return json(res, 201, { ok: true, lead, request, emailSent });
 }
 
 async function contractsApi(req, res, url) {
