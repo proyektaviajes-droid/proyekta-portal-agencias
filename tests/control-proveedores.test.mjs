@@ -17,6 +17,19 @@ test('Control registra costes por proveedor y salida', () => {
   assert.match(server, /entity_id: input\.entityId/);
   assert.match(server, /departure_id: input\.departureId/);
   assert.match(server, /direction: 'pagar'/);
+  assert.match(server, /economic_document_lines/);
+  assert.match(server, /taxBase/);
+});
+
+test('cada servicio conserva su fórmula económica completa', () => {
+  assert.match(control, /hotelNights/);
+  assert.match(control, /doubleRooms/);
+  assert.match(control, /busCapacity/);
+  assert.match(control, /totalKm/);
+  assert.match(control, /pricePerKm/);
+  assert.match(control, /pricePerPerson/);
+  assert.match(control, /guideDays/);
+  assert.match(control, /capacityWarning/);
 });
 
 test('Control permite editar proveedores sin borrar su historial', () => {

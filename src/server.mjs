@@ -1431,7 +1431,7 @@ async function adminApi(req, res, url) {
         optionalSupa('v_control_cash_position', { query: { select: '*' } }),
         optionalSupa('due_items', { query: { select: '*,entities(display_name)', order: 'due_date.asc', status: 'in.(pendiente,parcial,vencido)', limit: '200' } }),
         optionalSupa('control_tasks', { query: { select: '*', order: 'due_at.asc', status: 'in.(pendiente,en_curso)', limit: '12' } }),
-        optionalSupa('economic_documents', { query: { select: '*,entities(display_name,tax_id)', order: 'issue_date.desc', limit: '200' } }),
+        optionalSupa('economic_documents', { query: { select: '*,entities(display_name,tax_id),economic_document_lines(description,quantity,unit_price,tax_rate,tax_base,tax_amount,total_amount)', order: 'issue_date.desc', limit: '200' } }),
         optionalSupa('pc_expenses', { query: { select: '*,pc_expense_categories(name),pc_entities(display_name)', order: 'expense_date.desc', limit: '200' } }),
         optionalSupa('documents', { query: { select: '*', document_type: 'eq.factura_gestoria', order: 'created_at.desc', limit: '500' } }),
         supa('agencies', { query: { select: 'id,agency_code,commercial_name,legal_name,default_commission_rate,access_status,contract_status,created_at', deleted_at: 'is.null', order: 'commercial_name.asc', limit: '500' } }),
@@ -1538,11 +1538,19 @@ async function adminApi(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/admin/control/provider-costs') {
     try {
       const input = await bodyJson(req);
-      const amount = roundMoney(input.amount);
+      const lines = (Array.isArray(input.lines) ? input.lines : []).map(line => ({
+        description: required(line.description, 'Descripción del coste'),
+        quantity: Math.max(0, Number(line.quantity || 0)),
+        unit_price: Math.max(0, roundMoney(line.unitPrice || 0)),
+        tax_rate: Math.max(0, Number(line.taxRatePct || 0) / 100)
+      })).filter(line => line.quantity > 0 && line.unit_price >= 0);
+      const taxBase = roundMoney(lines.reduce((sum, line) => sum + line.quantity * line.unit_price, 0));
+      const taxAmount = roundMoney(lines.reduce((sum, line) => sum + line.quantity * line.unit_price * line.tax_rate, 0));
+      const amount = roundMoney(taxBase + taxAmount);
       const paidAmount = Math.min(amount, Math.max(0, roundMoney(input.paidAmount || 0)));
       if (!input.entityId) return json(res, 400, { error: 'Selecciona un proveedor.' });
       if (!input.departureId) return json(res, 400, { error: 'Selecciona la salida a la que corresponde el coste.' });
-      if (!input.concept || amount <= 0) return json(res, 400, { error: 'Indica concepto e importe válido.' });
+      if (!input.concept || !lines.length || amount <= 0) return json(res, 400, { error: 'Completa el desglose del servicio con cantidades y precios válidos.' });
       const issueDate = input.issueDate || new Date().toISOString().slice(0, 10);
       const dueDate = input.dueDate || issueDate;
       const document = (await supa('economic_documents', {
@@ -1555,8 +1563,8 @@ async function adminApi(req, res, url) {
           departure_id: input.departureId,
           issue_date: issueDate,
           due_date: dueDate,
-          tax_base: amount,
-          tax_amount: 0,
+          tax_base: taxBase,
+          tax_amount: taxAmount,
           total_amount: amount,
           paid_amount: 0,
           status: 'recibida',
@@ -1564,7 +1572,7 @@ async function adminApi(req, res, url) {
           notes: `[CONTROL_PROVEEDOR][TIPO:${input.costType || 'otro'}] ${input.notes || ''}`.trim()
         }]
       }))[0];
-      await supa('economic_document_lines', { method: 'POST', body: [{ document_id: document.id, description: input.concept, quantity: 1, unit_price: amount, tax_rate: 0 }] });
+      await supa('economic_document_lines', { method: 'POST', body: lines.map((line, index) => ({ document_id: document.id, line_order: index + 1, ...line })) });
       await supa('due_items', { method: 'POST', body: [{ document_id: document.id, entity_id: input.entityId, direction: 'pagar', due_date: dueDate, amount, paid_amount: 0, status: 'pendiente', notes: input.notes || null }] });
       const recorded = paidAmount > 0
         ? await markAccountingDocumentPaid(document.id, { amount: paidAmount, movementDate: issueDate, concept: input.concept }, session)
