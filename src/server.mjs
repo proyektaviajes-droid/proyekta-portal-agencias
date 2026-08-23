@@ -179,6 +179,8 @@ export async function buildReservationConfirmationPdf({ reservation, payments = 
   pdf.setSubject('Confirmación de reserva y pagos registrados');
   const page = pdf.addPage([595.2756, 841.8898]);
   const officialLetterhead = await pdf.embedPng(await readFile(templatePath));
+  const officialStamp = await pdf.embedPng(await readFile(join(root, 'assets', 'sello-proyekta-azul.png')));
+  const officialSignature = await pdf.embedPng(await readFile(join(root, 'assets', 'firma-jon-arsuaga.png')));
   page.drawImage(officialLetterhead, { x: 0, y: 0, width: 595.2756, height: 841.8898 });
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -241,7 +243,7 @@ export async function buildReservationConfirmationPdf({ reservation, payments = 
   draw('CONCEPTO / REFERENCIA', 175, 244, { font: bold, size: 7, color: muted });
   rightText('IMPORTE', 533, 244, { font: bold, size: 7, color: muted });
   let y = 224;
-  for (const payment of validPayments.slice(0, 5)) {
+  for (const payment of validPayments.slice(0, 3)) {
     page.drawLine({ start: { x: 78, y: y + 11 }, end: { x: 533, y: y + 11 }, thickness: 0.4, color: blueGrey });
     draw(datePdf(payment.created_at), 78, y, { size: 8.5 });
     draw(payment.concept || payment.external_reference || payment.method, 175, y, { size: 8.5, maxWidth: 250 });
@@ -249,8 +251,12 @@ export async function buildReservationConfirmationPdf({ reservation, payments = 
     y -= 23;
   }
   if (!validPayments.length) draw('No hay pagos contabilizados.', 78, y, { size: 8.5, color: muted });
-  draw('Este documento confirma los datos registrados en PROYEKTA VIAJES en la fecha de emisión.', 92, 96, { size: 7.2, color: muted, maxWidth: 430 });
-  draw('No sustituye una factura cuando esta resulte legalmente exigible.', 145, 84, { size: 7.2, color: muted, maxWidth: 340 });
+  if (validPayments.length > 3) draw(`Hay ${validPayments.length - 3} pago(s) adicional(es) en el historial.`, 78, 138, { size: 7.5, color: muted, maxWidth: 215 });
+  page.drawImage(officialStamp, { x: 400, y: 107, width: 82, height: 79, opacity: 0.82 });
+  page.drawImage(officialSignature, { x: 365, y: 108, width: 105, height: 86, opacity: 0.94 });
+  draw('Jon Arsuaga · PROYEKTA VIAJES', 326, 99, { font: bold, size: 7.2, color: navy, maxWidth: 190 });
+  draw('Generado con los datos registrados en PROYEKTA VIAJES.', 78, 118, { size: 7.2, color: muted, maxWidth: 215 });
+  draw('No sustituye una factura legalmente exigible.', 78, 101, { size: 7.2, color: muted, maxWidth: 215 });
   return Buffer.from(await pdf.save());
 }
 
