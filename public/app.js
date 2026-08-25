@@ -323,10 +323,12 @@ async function adminView(view) {
     document.querySelector('#restoreBackup')?.addEventListener('click', restoreSelectedBackup);
   }
   if (view === 'adminPayments') {
-    const { payments } = await api('/api/admin/payments');
-    target.innerHTML = html`<h2>Pagos</h2><div class="notice">Puedes verificar, anular, devolver o borrar pagos. Al cambiar un pago se recalcula automaticamente lo pagado en la reserva.</div>${table(['Reserva','Agencia','Importe','Metodo','Estado','Referencia','Acciones'], payments.map(p => [
+    const [{ payments }, { reservations }] = await Promise.all([api('/api/admin/payments'), api('/api/admin/reservations')]);
+    target.innerHTML = html`<div class="toolbar"><h2>Pagos</h2><button id="newAdminPayment">Añadir pago manual</button></div><div class="notice">Aquí puedes añadir un cobro olvidado, corregir su importe o datos, verificarlo, anularlo, devolverlo o borrarlo. El total pagado y pendiente de la reserva se recalcula automáticamente.</div><div id="adminPaymentForm" class="panel hidden">${adminPaymentForm(reservations)}</div>${table(['Reserva','Agencia','Importe','Metodo','Estado','Referencia','Acciones'], payments.map(p => [
       p.reservations?.reservation_code, p.agencies?.commercial_name, money(p.amount), p.method, badge(p.status), p.external_reference || '', paymentActions(p)
     ]))}`;
+    document.querySelector('#newAdminPayment').onclick = () => document.querySelector('#adminPaymentForm').classList.toggle('hidden');
+    document.querySelector('#createAdminPayment')?.addEventListener('submit', createAdminPayment);
     bindAdminPaymentButtons(target);
   }
   if (view === 'adminGestoria') {
@@ -568,6 +570,7 @@ async function openAdminReservation(id) {
     const data = await api(`/api/admin/reservations/${id}`);
     box.innerHTML = reservationDetail(data);
     bindAdminReservationButtons(box);
+    bindAdminPaymentButtons(box, id);
     box.querySelector('[data-close-reservation]')?.addEventListener('click', () => { box.innerHTML = ''; });
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
@@ -617,7 +620,7 @@ function reservationDetail(data) {
       </div>
       <div class="grid two">
         <div class="card"><h3>Viajeros</h3>${travellers.length ? table(['Nombre','Telefono','Email','DNI','Habitacion'], travellers.map(t => [fullName(t), t.phone || '', t.email || '', t.identity_document || '', t.room_type || ''])) : '<p class="muted">Aun no hay viajeros registrados.</p>'}</div>
-        <div class="card"><h3>Pagos</h3>${payments.length ? table(['Fecha','Pagador','Importe','Metodo','Estado','Referencia'], payments.map(p => [formatDateTime(p.created_at), p.payer_name || '', money(p.amount), p.method || '', badge(p.status), p.external_reference || ''])) : '<p class="muted">Aun no hay pagos comunicados.</p>'}</div>
+        <div class="card"><h3>Pagos</h3>${payments.length ? table(['Fecha','Pagador','Importe','Metodo','Estado','Referencia','Acciones'], payments.map(p => [formatDateTime(p.created_at), p.payer_name || '', money(p.amount), p.method || '', badge(p.status), p.external_reference || '', paymentActions(p)])) : '<p class="muted">Aun no hay pagos comunicados.</p>'}</div>
       </div>
       <div class="grid two">
         <div class="card"><h3>Historial</h3>${history.length ? table(['Fecha','Antes','Despues','Motivo'], history.map(h => [formatDateTime(h.created_at), h.old_status || '', h.new_status || '', h.reason || ''])) : '<p class="muted">Sin historial todavia.</p>'}</div>
@@ -1435,6 +1438,7 @@ function accountingDocActions(doc, files = []) {
 
 function paymentActions(p) {
   const buttons = [];
+  buttons.push(`<button class="ghost" data-edit-payment="${p.id}" data-amount="${p.amount}" data-method="${esc(p.method || '')}" data-reference="${esc(p.external_reference || '')}" data-concept="${esc(p.concept || '')}" data-status="${esc(p.status || '')}">Editar</button>`);
   if (p.status !== 'verificado') buttons.push(`<button data-verify="${p.id}">Verificar</button>`);
   if (p.status === 'verificado' && Number(p.amount || 0) > 0) buttons.push(`<button class="ghost" data-refund-payment="${p.id}" data-amount="${p.amount}">Devolver</button>`);
   if (!['anulado','devuelto'].includes(p.status)) buttons.push(`<button class="ghost" data-cancel-payment="${p.id}">Anular</button>`);
@@ -1442,18 +1446,38 @@ function paymentActions(p) {
   return `<div class="actions">${buttons.join('')}</div>`;
 }
 
-function bindAdminPaymentButtons(target) {
+function bindAdminPaymentButtons(target, reservationId = '') {
+  const refresh = () => reservationId ? refreshOpenReservation(reservationId) : adminView('adminPayments');
+  target.querySelectorAll('[data-edit-payment]').forEach(btn => btn.onclick = async () => {
+    const amount = prompt('Importe correcto del pago:', btn.dataset.amount || '');
+    if (amount === null) return;
+    const method = prompt('Método de pago:', btn.dataset.method || 'transferencia');
+    if (method === null) return;
+    const reference = prompt('Referencia bancaria (puede quedar vacía):', btn.dataset.reference || '');
+    if (reference === null) return;
+    const concept = prompt('Concepto:', btn.dataset.concept || 'Pago de reserva');
+    if (concept === null) return;
+    const status = prompt('Estado: verificado, recibido, pendiente o anulado', btn.dataset.status || 'verificado');
+    if (status === null) return;
+    try {
+      await api(`/api/admin/payments/${btn.dataset.editPayment}`, { method: 'PATCH', body: { amount: parseMoneyInput(amount), method, externalReference: reference, concept, status: status.trim().toLowerCase() } });
+      alert('Pago corregido. La reserva se ha recalculado.');
+      refresh();
+    } catch (err) {
+      alert('No se pudo corregir el pago: ' + err.message);
+    }
+  });
   target.querySelectorAll('[data-verify]').forEach(btn => btn.onclick = async () => {
     const data = await api(`/api/admin/payments/${btn.dataset.verify}/verify`, { method: 'PATCH' });
     alert(data.readyToConfirm ? 'Pago verificado. La reserva ya tiene el minimo para confirmar.' : 'Pago verificado y sumado a la reserva.');
-    adminView('adminPayments');
+    refresh();
   });
   target.querySelectorAll('[data-cancel-payment]').forEach(btn => btn.onclick = async () => {
     if (!confirm('Anular este pago y recalcular la reserva?')) return;
     try {
       await api(`/api/admin/payments/${btn.dataset.cancelPayment}/cancel`, { method: 'PATCH' });
       alert('Pago anulado. La reserva se ha recalculado.');
-      adminView('adminPayments');
+      refresh();
     } catch (err) {
       alert('No se pudo anular el pago: ' + err.message);
     }
@@ -1464,7 +1488,7 @@ function bindAdminPaymentButtons(target) {
     try {
       const result = await api(`/api/admin/payments/${btn.dataset.refundPayment}/refund`, { method: 'POST', body: { amount: parseMoneyInput(amount) } });
       alert(`Devolucion registrada. Pagado en la reserva ahora: ${money(result.reservation?.paid_amount || 0)}`);
-      adminView('adminPayments');
+      refresh();
     } catch (err) {
       alert('No se pudo devolver el pago: ' + err.message);
     }
@@ -1474,11 +1498,34 @@ function bindAdminPaymentButtons(target) {
     try {
       await api(`/api/admin/payments/${btn.dataset.deletePayment}`, { method: 'DELETE' });
       alert('Pago borrado. La reserva se ha recalculado.');
-      adminView('adminPayments');
+      refresh();
     } catch (err) {
       alert('No se pudo borrar el pago: ' + err.message);
     }
   });
+}
+
+function adminPaymentForm(reservations) {
+  return `<form id="createAdminPayment" class="form-grid">
+    <label class="full">Reserva<select name="reservationId" required><option value="">Selecciona la reserva</option>${reservations.filter(r => r.status !== 'cancelada').map(r => `<option value="${r.id}">${esc(r.reservation_code)} · ${esc(r.agencies?.commercial_name || '')} · pendiente ${money(Math.max(0, Number(r.total_amount || 0) - Number(r.paid_amount || 0)))}</option>`).join('')}</select></label>
+    <label>Importe<input name="amount" inputmode="decimal" required placeholder="0,00"></label>
+    <label>Método<select name="method"><option value="transferencia">Transferencia</option><option value="tarjeta">Tarjeta</option><option value="efectivo">Efectivo</option><option value="bizum">Bizum</option><option value="otro">Otro</option></select></label>
+    <label>Referencia<input name="externalReference" placeholder="Referencia bancaria"></label>
+    <label>Concepto<input name="concept" placeholder="Pago de reserva"></label>
+    <button class="full">Guardar como pago verificado</button>
+  </form>`;
+}
+
+async function createAdminPayment(event) {
+  event.preventDefault();
+  const input = Object.fromEntries(new FormData(event.currentTarget));
+  try {
+    await api(`/api/admin/reservations/${input.reservationId}/payments`, { method: 'POST', body: { amount: parseMoneyInput(input.amount), method: input.method, externalReference: input.externalReference, concept: input.concept } });
+    alert('Pago añadido y reserva recalculada.');
+    adminView('adminPayments');
+  } catch (err) {
+    alert('No se pudo añadir el pago: ' + err.message);
+  }
 }
 function travellersTable(rows) {
   return table(['Nombre','DNI','Telefono','Email','Agencia','Reserva','Salida','Habitacion','Documentos','Acciones'], rows.map(t => {

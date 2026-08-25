@@ -1367,6 +1367,33 @@ async function adminApi(req, res, url) {
     return json(res, 200, { payments: await supa('payments', { query: { select: '*,reservations(reservation_code),agencies(commercial_name,agency_code)', order: 'created_at.desc' } }) });
   }
 
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/payments\/[^/]+$/)) {
+    const id = url.pathname.split('/')[4];
+    const input = await bodyJson(req);
+    const current = (await supa('payments', { query: { id: `eq.${id}`, limit: '1' } }))[0];
+    if (!current) return json(res, 404, { error: 'Pago no encontrado' });
+    const amount = roundMoney(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return json(res, 400, { error: 'Importe de pago no valido' });
+    const status = String(input.status || current.status || '').trim().toLowerCase();
+    const allowedStatuses = ['pendiente', 'comunicado', 'recibido', 'verificado', 'anulado', 'devuelto', 'rechazado'];
+    if (!allowedStatuses.includes(status)) return json(res, 400, { error: 'Estado de pago no valido' });
+    const patch = {
+      amount,
+      method: String(input.method || current.method || 'transferencia').trim(),
+      external_reference: String(input.externalReference ?? current.external_reference ?? '').trim() || null,
+      concept: String(input.concept ?? current.concept ?? '').trim() || null,
+      status
+    };
+    if (status === 'verificado') {
+      patch.verified_by_admin_id = session.userId;
+      patch.verified_at = new Date().toISOString();
+    }
+    const payment = (await supa('payments', { method: 'PATCH', query: { id: `eq.${id}` }, body: patch }))[0];
+    const reservation = current.reservation_id ? await updateReservationPaidAmount(current.reservation_id) : null;
+    await audit(session, 'payment_corrected', 'payments', id, { before: { amount: current.amount, method: current.method, external_reference: current.external_reference, concept: current.concept, status: current.status }, after: patch, reservation_id: current.reservation_id || null });
+    return json(res, 200, { payment, reservation });
+  }
+
   if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/payments\/[^/]+\/verify$/)) {
     const id = url.pathname.split('/')[4];
     const payment = (await supa('payments', { method: 'PATCH', query: { id: `eq.${id}` }, body: { status: 'verificado', verified_by_admin_id: session.userId, verified_at: new Date().toISOString() } }))[0];
