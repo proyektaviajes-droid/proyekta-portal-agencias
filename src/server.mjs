@@ -437,16 +437,34 @@ async function api(req, res, url) {
       const agencyCode = String(input.agencyCode || '').trim().toUpperCase();
       const email = String(input.email || '').trim().toLowerCase();
       const genericResponse = { ok: true, message: 'Si los datos coinciden con una cuenta activa, recibirás un correo con el enlace de recuperación.' };
-      if (!agencyCode || agencyCode.length > 30 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, 200, genericResponse);
+      if (agencyCode.length > 30 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, 200, genericResponse);
       const attemptKey = `${req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown'}:${agencyCode}:${email}`;
       if (!allowPasswordResetAttempt(attemptKey)) return json(res, 200, genericResponse);
 
-      const agencies = await supa('agencies', { query: { agency_code: `eq.${agencyCode}`, access_status: 'eq.activa', deleted_at: 'is.null', limit: '1' } });
-      const agency = agencies[0];
-      if (!agency) return json(res, 200, genericResponse);
-      const users = await supa('agency_users', { query: { agency_id: `eq.${agency.id}`, email: `ilike.${email}`, is_active: 'eq.true', limit: '1' } });
-      const user = users[0];
-      if (!user) return json(res, 200, genericResponse);
+      // El correo registrado basta para recuperar el acceso. El código solo
+      // desambigua si la misma persona administra más de una agencia.
+      const matchingUsers = await supa('agency_users', { query: { email: `ilike.${email}`, is_active: 'eq.true', limit: '20' } });
+      const candidates = [];
+      for (const candidateUser of matchingUsers) {
+        const candidateAgency = (await supa('agencies', { query: { id: `eq.${candidateUser.agency_id}`, access_status: 'eq.activa', deleted_at: 'is.null', limit: '1' } }))[0];
+        if (candidateAgency) candidates.push({ user: candidateUser, agency: candidateAgency });
+      }
+      let account = agencyCode ? candidates.find(candidate => String(candidate.agency.agency_code || '').toUpperCase() === agencyCode) : null;
+      if (!account && candidates.length === 1) account = candidates[0];
+
+      // Compatibilidad con agencias cuyo correo principal se modificó después
+      // de crear el usuario de acceso.
+      if (!account) {
+        const matchingAgencies = await supa('agencies', { query: { main_email: `ilike.${email}`, access_status: 'eq.activa', deleted_at: 'is.null', limit: '20' } });
+        const agency = (agencyCode && matchingAgencies.find(candidate => String(candidate.agency_code || '').toUpperCase() === agencyCode)) || (matchingAgencies.length === 1 ? matchingAgencies[0] : null);
+        if (agency) {
+          const agencyUsers = await supa('agency_users', { query: { agency_id: `eq.${agency.id}`, is_active: 'eq.true', limit: '50' } });
+          const user = agencyUsers.find(candidate => candidate.role === 'principal') || agencyUsers[0];
+          if (user) account = { user, agency };
+        }
+      }
+      if (!account) return json(res, 200, genericResponse);
+      const { user, agency } = account;
 
       const token = randomBytes(32).toString('base64url');
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -474,13 +492,13 @@ async function api(req, res, url) {
       ].join('\n');
       let status = 'pendiente';
       if (process.env.RESEND_API_KEY) {
-        status = await sendAgencyEmail({ to: user.email, subject, text }).then(() => 'enviado').catch(error => {
+        status = await sendAgencyEmail({ to: email, subject, text }).then(() => 'enviado').catch(error => {
           console.error('No se pudo enviar la recuperacion de contraseña:', error);
           return 'pendiente_envio';
         });
       }
       await optionalSupa('notifications', { method: 'POST', body: [{ agency_id: agency.id, user_id: user.id, channel: 'email', template_key: 'agency_password_reset', subject, body: text, status }] }, null);
-      await audit({ type: 'public', userId: user.id, agencyId: agency.id }, 'agency_password_reset_requested', 'agency_users', user.id);
+      await audit({ type: 'public', userId: user.id, agencyId: agency.id }, 'agency_password_reset_requested', 'agency_users', user.id, { delivery_status: status, used_agency_code: Boolean(agencyCode) });
       return json(res, 200, genericResponse);
     }
 

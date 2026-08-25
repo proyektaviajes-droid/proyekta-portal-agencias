@@ -52,8 +52,8 @@
     <template id="resetPasswordRequestTpl">
       <form class="panel narrow" id="resetPasswordRequestForm">
         <h1>Recuperar contraseña</h1>
-        <p class="muted">Introduce el código de agencia y el correo asociado a tu acceso. No se creará una cuenta nueva ni se perderán datos.</p>
-        <label>Código de agencia<input name="agencyCode" autocomplete="username" placeholder="AG-0001" required></label>
+        <p class="muted">Introduce el correo asociado a tu acceso. El código de agencia es opcional y solo hace falta si utilizas el mismo correo en varias agencias. No se creará una cuenta nueva ni se perderán datos.</p>
+        <label>Código de agencia (opcional)<input name="agencyCode" autocomplete="username" placeholder="AG-0001"></label>
         <label>Correo asociado<input name="email" type="email" autocomplete="email" required></label>
         <button>Enviar enlace de recuperación</button>
         <a class="button-link" href="/acceso">Volver al acceso</a>
