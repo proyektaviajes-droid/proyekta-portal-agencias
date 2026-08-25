@@ -2168,6 +2168,29 @@ async function sendOperationalEmail({ subject, text }) {
   return true;
 }
 
+async function sendAgencyEmail({ to, subject, text }) {
+  const recipient = String(to || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+    throw new Error('Destinatario de correo no valido');
+  }
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      from: `${process.env.MAIL_FROM_NAME || 'PROYEKTA VIAJES'} <${process.env.MAIL_FROM_EMAIL || 'jon@proyektaviajes.es'}>`,
+      to: [recipient],
+      reply_to: process.env.MAIL_REPLY_TO || 'reservas@proyektaviajes.es',
+      subject,
+      text
+    })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return true;
+}
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
