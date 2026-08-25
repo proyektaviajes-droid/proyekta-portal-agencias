@@ -21,3 +21,9 @@ test('el enlace solo se envía al correo introducido y validado', () => {
   assert.match(server, /sendAgencyEmail\(\{ to: email, subject, text \}\)/);
   assert.match(server, /delivery_status: status/);
 });
+
+test('la pantalla no afirma que se envió si falta configuración o Resend falla', () => {
+  assert.match(server, /RESEND_API_KEY no configurada/);
+  assert.match(server, /El proveedor de correo ha rechazado el envío/);
+  assert.match(server, /Correo enviado\. Revisa también/);
+});

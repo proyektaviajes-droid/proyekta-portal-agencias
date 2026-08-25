@@ -463,43 +463,55 @@ async function api(req, res, url) {
           if (user) account = { user, agency };
         }
       }
-      if (!account) return json(res, 200, genericResponse);
-      const { user, agency } = account;
-
-      const token = randomBytes(32).toString('base64url');
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-      await supa('agency_users', {
-        method: 'PATCH',
-        query: { id: `eq.${user.id}` },
-        body: { invitation_token_hash: sha256(token), invited_at: new Date().toISOString(), invitation_expires_at: expiresAt }
-      });
-      const baseUrl = process.env.PUBLIC_BASE_URL || 'https://agencias.proyektaviajes.es';
-      const resetUrl = `${baseUrl.replace(/\/$/, '')}/crear-contrasena?token=${encodeURIComponent(token)}&modo=recuperacion`;
-      const subject = 'Recuperar contraseña - PROYEKTA VIAJES';
-      const text = [
-        `Hola ${user.name || agency.commercial_name},`,
-        '',
-        'Hemos recibido una solicitud para cambiar la contraseña de acceso de tu agencia.',
-        `Agencia: ${agency.commercial_name}`,
-        `Código: ${agency.agency_code}`,
-        '',
-        `Crea una nueva contraseña desde este enlace: ${resetUrl}`,
-        '',
-        'El enlace caduca en una hora y solo puede utilizarse una vez.',
-        'Si no solicitaste este cambio, ignora este correo. Tu contraseña actual seguirá funcionando.',
-        '',
-        'PROYEKTA VIAJES'
-      ].join('\n');
-      let status = 'pendiente';
-      if (process.env.RESEND_API_KEY) {
-        status = await sendAgencyEmail({ to: email, subject, text }).then(() => 'enviado').catch(error => {
-          console.error('No se pudo enviar la recuperacion de contraseña:', error);
-          return 'pendiente_envio';
+      let subject = 'Recuperar contraseña - PROYEKTA VIAJES';
+      let text;
+      if (account) {
+        const { user, agency } = account;
+        const token = randomBytes(32).toString('base64url');
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        await supa('agency_users', {
+          method: 'PATCH',
+          query: { id: `eq.${user.id}` },
+          body: { invitation_token_hash: sha256(token), invited_at: new Date().toISOString(), invitation_expires_at: expiresAt }
         });
+        const baseUrl = process.env.PUBLIC_BASE_URL || 'https://agencias.proyektaviajes.es';
+        const resetUrl = `${baseUrl.replace(/\/$/, '')}/crear-contrasena?token=${encodeURIComponent(token)}&modo=recuperacion`;
+        text = [
+          `Hola ${user.name || agency.commercial_name},`, '',
+          'Hemos recibido una solicitud para cambiar la contraseña de acceso de tu agencia.',
+          `Agencia: ${agency.commercial_name}`, `Código: ${agency.agency_code}`, '',
+          `Crea una nueva contraseña desde este enlace: ${resetUrl}`, '',
+          'El enlace caduca en una hora y solo puede utilizarse una vez.',
+          'Si no solicitaste este cambio, ignora este correo. Tu contraseña actual seguirá funcionando.', '', 'PROYEKTA VIAJES'
+        ].join('\n');
+      } else {
+        subject = 'Solicitud de acceso - PROYEKTA VIAJES';
+        text = [
+          'Hemos recibido una solicitud de recuperación para este correo,', '',
+          'No encontramos una cuenta de agencia activa asociada a los datos introducidos.',
+          'Comprueba el correo o responde a este mensaje para que PROYEKTA VIAJES revise tu acceso sin crear una cuenta nueva.', '',
+          'PROYEKTA VIAJES'
+        ].join('\n');
       }
-      await optionalSupa('notifications', { method: 'POST', body: [{ agency_id: agency.id, user_id: user.id, channel: 'email', template_key: 'agency_password_reset', subject, body: text, status }] }, null);
-      await audit({ type: 'public', userId: user.id, agencyId: agency.id }, 'agency_password_reset_requested', 'agency_users', user.id, { delivery_status: status, used_agency_code: Boolean(agencyCode) });
-      return json(res, 200, genericResponse);
+
+      if (!process.env.RESEND_API_KEY) {
+        console.error('Recuperacion no enviada: RESEND_API_KEY no configurada');
+        return json(res, 200, { ok: false, message: 'El servicio de correo no está disponible ahora. PROYEKTA VIAJES debe revisar la configuración de envío.' });
+      }
+      let status = 'enviado';
+      try {
+        await sendAgencyEmail({ to: email, subject, text });
+      } catch (error) {
+        status = 'error_envio';
+        console.error('No se pudo enviar la recuperacion de contraseña:', error);
+      }
+      if (account) {
+        const { user, agency } = account;
+        await optionalSupa('notifications', { method: 'POST', body: [{ agency_id: agency.id, user_id: user.id, channel: 'email', template_key: 'agency_password_reset', subject, body: text, status }] }, null);
+        await audit({ type: 'public', userId: user.id, agencyId: agency.id }, 'agency_password_reset_requested', 'agency_users', user.id, { delivery_status: status, used_agency_code: Boolean(agencyCode) });
+      }
+      if (status !== 'enviado') return json(res, 200, { ok: false, message: 'El proveedor de correo ha rechazado el envío. PROYEKTA VIAJES debe revisar el servicio de email.' });
+      return json(res, 200, { ok: true, message: 'Correo enviado. Revisa también las carpetas Spam, Promociones y Correo no deseado.' });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
