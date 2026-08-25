@@ -648,7 +648,11 @@ function requestActions(request) {
 function bindAdminRequestButtons(target) {
   target.querySelectorAll('[data-request-open]').forEach(btn => btn.onclick = () => {
     const request = (state.adminRequests || []).find(r => String(r.id) === String(btn.dataset.requestOpen));
-    if (request) document.querySelector('#requestDetail').innerHTML = renderRequestDetail(request);
+    if (request) {
+      const detail = document.querySelector('#requestDetail');
+      detail.innerHTML = renderRequestDetail(request);
+      bindAdminRequestButtons(detail);
+    }
   });
   target.querySelectorAll('[data-request-copy]').forEach(btn => btn.onclick = () => copyAgencyRequestReply(btn.dataset.requestCopy));
   target.querySelectorAll('[data-request-contact]').forEach(btn => btn.onclick = () => markAgencyRequestContacted(btn.dataset.requestContact));
@@ -657,7 +661,11 @@ function bindAdminRequestButtons(target) {
   target.querySelectorAll('[data-request-delete]').forEach(btn => btn.onclick = () => deleteAgencyRequest(btn.dataset.requestDelete, btn.dataset.requestName));
   target.querySelectorAll('[data-lead-open]').forEach(btn => btn.onclick = () => {
     const lead = (state.adminLeads || []).find(l => String(l.id) === String(btn.dataset.leadOpen));
-    if (lead) document.querySelector('#requestDetail').innerHTML = renderLeadDetail(lead);
+    if (lead) {
+      const detail = document.querySelector('#requestDetail');
+      detail.innerHTML = renderLeadDetail(lead);
+      bindAdminRequestButtons(detail);
+    }
   });
   target.querySelectorAll('[data-lead-copy]').forEach(btn => btn.onclick = () => copyAgencyLeadReply(btn.dataset.leadCopy));
   target.querySelectorAll('[data-lead-contact]').forEach(btn => btn.onclick = () => markAgencyLeadContacted(btn.dataset.leadContact));
