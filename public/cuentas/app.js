@@ -12,7 +12,7 @@ const $=id=>document.getElementById(id);
 const money=new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'});
 const today=()=>new Date().toISOString().slice(0,10);
 
-if('serviceWorker'in navigator)navigator.serviceWorker.register('/cuentas/sw.js?v=9',{scope:'/cuentas/'}).catch(()=>{});
+if('serviceWorker'in navigator)navigator.serviceWorker.register('/cuentas/sw.js?v=10',{scope:'/cuentas/'}).catch(()=>{});
 $('lockHelp').textContent=localStorage.getItem(STORAGE)?'Introduce el PIN creado en este dispositivo.':'Crea un PIN de al menos 6 caracteres. Los datos quedarán cifrados en este dispositivo.';
 
 $('unlockForm').addEventListener('submit',async e=>{e.preventDefault();$('lockError').textContent='';const pin=$('pin').value;if(pin.length<6){$('lockError').textContent='El PIN debe tener al menos 6 caracteres.';return}try{const saved=localStorage.getItem(STORAGE);if(saved){const packet=JSON.parse(saved);key=await derive(pin,from64(packet.salt));try{db=JSON.parse(await decrypt(packet,key))}catch(primaryError){const backup=localStorage.getItem(STORAGE_BACKUP);if(!backup)throw primaryError;db=JSON.parse(await decrypt(JSON.parse(backup),key));localStorage.setItem(STORAGE,backup);syncMessage='Se recuperó automáticamente la última copia local válida.'}}else{const salt=crypto.getRandomValues(new Uint8Array(16));key=await derive(pin,salt);db=emptyDb();await persist(salt)}db=normalize(db);$('pin').value='';$('lock').hidden=true;$('app').hidden=false;render();if(navigator.onLine)await centralSync();else{recordSyncFailure('Sin Internet: puedes trabajar normalmente. Los cambios quedan pendientes.');await persist();render()}}catch{$('lockError').textContent='PIN incorrecto o datos dañados.'}});
@@ -65,17 +65,19 @@ async function centralSync(manual=false){
     if(!navigator.onLine)throw new Error('Sin Internet: puedes seguir trabajando; se sincronizará al recuperar conexión.');
     $('syncStatus').textContent='Sincronizando con la base central…';
     const first=await fetch('/api/admin/cuentas/snapshot',{credentials:'same-origin'});
-    if(first.status===401){recordSyncFailure('CUENTAS está trabajando sin conexión. Conecta la sesión online para sincronizar.');await persist();render();if(!$('onlineLoginDialog').open)$('onlineLoginDialog').showModal();return}
+    if(await requestOnlineLogin(first))return;
     const initial=await first.json();
     if(!first.ok)throw new Error(initial.error||'No se pudo leer la base central');
     db=mergeDb(db,normalize(initial));
     const sent=await fetch('/api/admin/cuentas/sync',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({deviceId:deviceId(),movements:db.movements,deletedMovements:db.settings?.deletedMovements||{},history:db.history,reimbursementReports:db.reimbursementReports})});
+    if(await requestOnlineLogin(sent))return;
     const result=await sent.json();if(!sent.ok)throw new Error(result.error||'No se pudo enviar la sincronización');
-    const finalResponse=await fetch('/api/admin/cuentas/snapshot',{credentials:'same-origin'});const central=await finalResponse.json();if(!finalResponse.ok)throw new Error(central.error||'No se pudo verificar la sincronización');
+    const finalResponse=await fetch('/api/admin/cuentas/snapshot',{credentials:'same-origin'});if(await requestOnlineLogin(finalResponse))return;const central=await finalResponse.json();if(!finalResponse.ok)throw new Error(central.error||'No se pudo verificar la sincronización');
     db=mergeDb(db,normalize(central));db.settings={...db.settings,lastSyncAt:new Date().toISOString(),lastSyncAttemptAt:new Date().toISOString(),lastSyncError:'',outbox:{},central:true};syncMessage='';await persist();render();if(manual||result.accepted)toast(`Base central actualizada: ${result.accepted} cambios aceptados.`)
   }catch(error){recordSyncFailure(error.message);await persist();render();if(manual)toast(error.message)}
   finally{centralRunning=false;if(centralQueued){centralQueued=false;scheduleCentralSync(300)}}
 }
+async function requestOnlineLogin(response){if(response.status!==401)return false;recordSyncFailure('Sesión online caducada. Tus datos siguen protegidos en este iPad. Identifícate para reanudar la sincronización.');await persist();render();if(!$('onlineLoginDialog').open)$('onlineLoginDialog').showModal();return true}
 async function onlineLogin(event){event.preventDefault();$('onlineLoginError').textContent='';const button=event.submitter;button.disabled=true;try{const response=await fetch('/api/auth/admin-login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({email:$('onlineEmail').value.trim(),password:$('onlinePassword').value})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Correo o contraseña incorrectos');$('onlinePassword').value='';$('onlineLoginDialog').close();syncMessage='';await centralSync(true)}catch(error){$('onlineLoginError').textContent=error.message}finally{button.disabled=false}}
 function scheduleCentralSync(delay=800){clearTimeout(centralTimer);centralTimer=setTimeout(()=>centralSync(),delay)}
 window.addEventListener('online',()=>{if(key)scheduleCentralSync(100)});
