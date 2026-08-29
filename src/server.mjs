@@ -323,7 +323,7 @@ async function optionalSupa(path, options = {}, fallback = []) {
   }
 }
 
-const BACKUP_TABLES = ['agencies','agency_users','departures','departure_inventory','reservations','travellers','payments','payment_corrections','refunds','commissions','commission_invoices','agency_economic_rules','departure_operating_costs','incidents','documents','reservation_documents','reservation_email_log','reservation_events','leads','lead_history','notifications','reservation_status_history','audit_logs'];
+const BACKUP_TABLES = ['agencies','agency_users','departures','departure_inventory','reservations','travellers','payments','payment_corrections','refunds','commissions','commission_invoices','agency_economic_rules','departure_operating_costs','incidents','change_requests','documents','reservation_documents','reservation_email_log','reservation_events','leads','lead_history','notifications','reservation_status_history','audit_logs'];
 
 
 function validateBackupPayload(backup) {
@@ -1475,7 +1475,43 @@ async function adminApi(req, res, url) {
     return json(res, 200, { ok: true, reservation });
   }
   if (req.method === 'GET' && url.pathname === '/api/admin/incidents') {
-    return json(res, 200, { incidents: await supa('incidents', { query: { select: '*,agencies(commercial_name,agency_code)', order: 'created_at.desc' } }) });
+    const [incidents, changeRequests] = await Promise.all([
+      supa('incidents', { query: { select: '*,agencies(commercial_name,agency_code)', order: 'created_at.desc' } }),
+      supa('change_requests', { query: { select: '*,agencies(commercial_name,agency_code),reservations(reservation_code,status)', order: 'created_at.desc' } })
+    ]);
+    return json(res, 200, { incidents, changeRequests });
+  }
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/admin\/change-requests\/[^/]+$/)) {
+    const id = url.pathname.split('/').pop();
+    const input = await bodyJson(req);
+    const request = (await supa('change_requests', { query: { id: `eq.${id}`, limit: '1' } }))[0];
+    if (!request) return json(res, 404, { error: 'Solicitud de cambio no encontrada' });
+    if (!['approve', 'reject'].includes(input.action)) return json(res, 400, { error: 'Acción no válida' });
+    if (request.status !== 'recibida') return json(res, 409, { error: 'Esta solicitud ya fue revisada' });
+    let payload = {};
+    try { payload = JSON.parse(request.reason || '{}'); } catch { payload = { reason: request.reason || '' }; }
+    const current = (await supa('reservations', { query: { id: `eq.${request.reservation_id}`, agency_id: `eq.${request.agency_id}`, limit: '1' } }))[0];
+    if (!current) return json(res, 404, { error: 'Reserva no encontrada' });
+    if (input.action === 'approve') {
+      const proposed = payload.proposed || {};
+      const patch = request.request_type === 'reactivacion'
+        ? { status: 'solicitud_recibida', deleted_at: null }
+        : request.request_type === 'cancelacion'
+          ? { status: 'cancelada', deleted_at: new Date().toISOString(), block_expires_at: null }
+          : {
+              lead_traveller_name: proposed.leadTravellerName || current.lead_traveller_name,
+              lead_traveller_phone: proposed.leadTravellerPhone || current.lead_traveller_phone,
+              lead_traveller_email: proposed.leadTravellerEmail || current.lead_traveller_email,
+              requested_places: Number(proposed.requestedPlaces || current.requested_places),
+              agency_observations: proposed.observations || current.agency_observations
+            };
+      await supa('reservations', { method: 'PATCH', query: { id: `eq.${current.id}`, agency_id: `eq.${request.agency_id}` }, body: patch });
+      if (patch.status && patch.status !== current.status) await supa('reservation_status_history', { method: 'POST', body: [{ reservation_id: current.id, old_status: current.status, new_status: patch.status, actor_type: 'admin', actor_id: session.userId, reason: `Solicitud ${request.request_type} aprobada` }] });
+    }
+    const status = input.action === 'approve' ? 'aprobada' : 'rechazada';
+    const updated = (await supa('change_requests', { method: 'PATCH', query: { id: `eq.${id}` }, body: { status, resolution: input.resolution || (status === 'aprobada' ? 'Aprobada por PROYEKTA' : 'Rechazada por PROYEKTA'), updated_at: new Date().toISOString() } }))[0];
+    await audit(session, `reservation_change_${status}`, 'change_requests', id, { reservationId: current.id, requestType: request.request_type });
+    return json(res, 200, { request: updated });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/admin/control/summary') {
@@ -1667,7 +1703,7 @@ async function adminApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/admin/backup/full') {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const tableNames = ['agencies','agency_users','departures','departure_inventory','reservations','travellers','payments','incidents','documents','leads','lead_history','notifications','reservation_status_history','audit_logs'];
+    const tableNames = ['agencies','agency_users','departures','departure_inventory','reservations','travellers','payments','incidents','change_requests','documents','leads','lead_history','notifications','reservation_status_history','audit_logs'];
     const tables = {};
     for (const name of tableNames) {
       tables[name] = await optionalSupa(name, { query: { select: '*' } }, []);
@@ -1858,13 +1894,15 @@ async function agencyApi(req, res, url) {
   if (!session) return;
 
   if (req.method === 'GET' && url.pathname === '/api/agency/dashboard') {
-    const [departures, reservations, payments, incidents] = await Promise.all([
+    const [departures, reservations, payments, incidents, changeRequests, documents] = await Promise.all([
       supa('departures', { query: { visible_to_agencies: 'eq.true', status: 'in.(disponible,pocas_plazas,confirmada)', order: 'starts_at.asc' } }),
-      supa('reservations', { query: { agency_id: `eq.${session.agencyId}`, deleted_at: 'is.null', select: '*,departures(trip_name,departure_code,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } }),
+      supa('reservations', { query: { agency_id: `eq.${session.agencyId}`, select: '*,departures(trip_name,departure_code,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } }),
       supa('payments', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc' } }),
-      supa('incidents', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc' } })
+      supa('incidents', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc' } }),
+      supa('change_requests', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc' } }),
+      supa('documents', { query: { agency_id: `eq.${session.agencyId}`, uploaded_by_type: 'eq.agency', order: 'created_at.desc' } })
     ]);
-    return json(res, 200, { departures, reservations, payments, incidents });
+    return json(res, 200, { departures, reservations, payments, incidents, changeRequests, documents });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/agency/reservations') {
@@ -1930,6 +1968,55 @@ async function agencyApi(req, res, url) {
     const instructions = buildPaymentInstructions(reservation);
     await audit(session, 'agency_payment_instructions_generated', 'reservations', id, { pending_total: instructions.pendingTotal });
     return json(res, 200, { instructions });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/agency\/reservations\/[^/]+\/change-requests$/)) {
+    const reservationId = url.pathname.split('/')[4];
+    const input = await bodyJson(req);
+    const reservation = (await supa('reservations', { query: { id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const allowedTypes = new Set(['correccion', 'reactivacion', 'cancelacion']);
+    const requestType = allowedTypes.has(input.requestType) ? input.requestType : 'correccion';
+    const reason = required(input.reason, 'Motivo');
+    const proposed = {
+      leadTravellerName: String(input.leadTravellerName || '').trim(),
+      leadTravellerPhone: String(input.leadTravellerPhone || '').trim(),
+      leadTravellerEmail: String(input.leadTravellerEmail || '').trim(),
+      requestedPlaces: Number(input.requestedPlaces || reservation.requested_places),
+      observations: String(input.observations || '').trim()
+    };
+    if (!Number.isInteger(proposed.requestedPlaces) || proposed.requestedPlaces < 1 || proposed.requestedPlaces > 100) return json(res, 400, { error: 'El número de viajeros no es válido' });
+    const request = (await supa('change_requests', { method: 'POST', body: [{ reservation_id: reservation.id, agency_id: session.agencyId, request_type: requestType, reason: JSON.stringify({ reason, proposed }), status: 'recibida' }] }))[0];
+    const labels = { correccion: 'Corrección de reserva', reactivacion: 'Reactivación de reserva', cancelacion: 'Cancelación solicitada' };
+    const description = `${labels[requestType]} ${reservation.reservation_code}. Motivo: ${reason}. Datos propuestos: titular ${proposed.leadTravellerName || reservation.lead_traveller_name}; viajeros ${proposed.requestedPlaces}; teléfono ${proposed.leadTravellerPhone || 'sin cambio'}; correo ${proposed.leadTravellerEmail || 'sin cambio'}; observaciones ${proposed.observations || 'sin cambio'}.`;
+    await supa('incidents', { method: 'POST', body: [{ incident_code: `INC-${Date.now().toString(36).toUpperCase()}`, reservation_id: reservation.id, agency_id: session.agencyId, category: 'Cambio de reserva', priority: 'normal', description, status: 'abierta' }] });
+    await audit(session, 'reservation_change_requested', 'change_requests', request.id, { reservationId, requestType });
+    return json(res, 201, { request });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/agency\/reservations\/[^/]+\/documents$/)) {
+    const reservationId = url.pathname.split('/')[4];
+    const input = await bodyJson(req);
+    const reservation = (await supa('reservations', { query: { id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const parsed = parseUpload(input);
+    const filename = safeFilename(input.filename || `documento-${reservation.reservation_code}`);
+    const storagePath = `agency-reservations/${session.agencyId}/${reservation.id}/${Date.now()}-${filename}`;
+    await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
+    const document = (await supa('documents', { method: 'POST', body: [{ agency_id: session.agencyId, reservation_id: reservation.id, document_type: input.documentType || 'documentacion_reserva', title: filename, storage_path: storagePath, visibility: 'agency', uploaded_by_type: 'agency', uploaded_by_id: session.userId || null }] }))[0];
+    await audit(session, 'reservation_document_uploaded', 'documents', document.id, { reservationId, filename });
+    return json(res, 201, { document });
+  }
+
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/agency\/reservations\/[^/]+\/documents\/[^/]+$/)) {
+    const parts = url.pathname.split('/');
+    const reservationId = parts[4], documentId = parts[6];
+    const reservation = (await supa('reservations', { query: { id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const document = (await supa('documents', { query: { id: `eq.${documentId}`, reservation_id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!document) return json(res, 404, { error: 'Documento no encontrado' });
+    const loaded = await downloadAccountingFile(document.storage_path);
+    return binary(res, document.title, loaded.mimeType, loaded.buffer);
   }
 
   if (req.method === 'POST' && url.pathname === '/api/agency/incidents') {

@@ -128,3 +128,16 @@ button:disabled { opacity: .65; cursor: wait; }
 .reservation-main .actions button { min-width: 150px; }
 .reservation-facts { display: flex; flex-wrap: wrap; gap: 8px; }
 .reservation-facts span { background: #f8faf8; border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; }
+.reservation-cards { display: grid; gap: 14px; }
+.reservation-heading { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
+.reservation-heading h4, .reservation-heading p { margin: 0; }
+.reservation-summary { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.document-list { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.document-list a { color: var(--brand); font-weight: 700; }
+.notice.compact { margin: 0; padding: 8px 10px; }
+.reservation-action-form { border-top: 1px solid var(--line); padding-top: 12px; }
+@media (max-width: 720px) {
+  .reservation-heading { flex-direction: column; }
+  .reservation-card > .actions { display: grid; grid-template-columns: 1fr; }
+  .reservation-card > .actions button { width: 100%; min-height: 48px; }
+}

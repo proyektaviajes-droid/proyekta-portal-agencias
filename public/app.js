@@ -406,10 +406,23 @@ async function adminView(view) {
     }
   }
   if (view === 'adminIncidents') {
-    const { incidents } = await api('/api/admin/incidents');
-    target.innerHTML = html`<h2>Incidencias</h2>${table(['Código','Agencia','Categoría','Prioridad','Estado','Descripción'], incidents.map(i => [
+    const { incidents, changeRequests = [] } = await api('/api/admin/incidents');
+    target.innerHTML = html`<h2>Solicitudes de actuación sobre reservas</h2>
+    ${table(['Reserva','Agencia','Solicitud','Estado','Detalle','Acciones'], changeRequests.map(r => {
+      let detail = r.reason || ''; try { detail = JSON.parse(r.reason || '{}').reason || detail; } catch {}
+      const actions = r.status === 'recibida' ? `<div class="actions"><button data-change-review="approve" data-change-id="${r.id}">Aprobar</button><button class="ghost danger" data-change-review="reject" data-change-id="${r.id}">Rechazar</button></div>` : badge(r.status);
+      return [r.reservations?.reservation_code || '', r.agencies?.commercial_name || '', r.request_type, badge(r.status), esc(detail), actions];
+    }))}
+    <h2>Incidencias</h2>${table(['Código','Agencia','Categoría','Prioridad','Estado','Descripción'], incidents.map(i => [
       i.incident_code, i.agencies?.commercial_name, i.category, i.priority, badge(i.status), i.description
     ]))}`;
+    document.querySelectorAll('[data-change-review]').forEach(button => button.addEventListener('click', async () => {
+      const approve = button.dataset.changeReview === 'approve';
+      if (!confirm(approve ? '¿Aprobar y aplicar este cambio a la reserva?' : '¿Rechazar esta solicitud?')) return;
+      const resolution = prompt('Nota para la agencia (opcional):') || '';
+      try { await api(`/api/admin/change-requests/${button.dataset.changeId}`, { method: 'PATCH', body: { action: button.dataset.changeReview, resolution } }); adminView('adminIncidents'); }
+      catch (error) { alert(error.message); }
+    }));
   }
   if (view === 'adminExports') {
     target.innerHTML = html`
@@ -901,8 +914,9 @@ async function agencyView(view) {
       <h3>Próximas salidas</h3>
       ${departuresTable(data.departures)}
       <h3>Mis reservas</h3>
-      ${reservationsTable(data.reservations)}
+      ${agencyReservations(data)}
     `;
+    bindAgencyReservationActions();
   }
   if (view === 'agencyNewReservation') {
     target.innerHTML = html`
@@ -1816,6 +1830,70 @@ function departuresTable(rows) {
 
 function reservationsTable(rows) {
   return table(['Código','Salida','Fechas','Viajeros','Total','Pagado','Estado'], rows.map(r => [r.reservation_code, r.departures?.origin_name || r.departures?.origin_code || '', formatDateRange(r.departures?.starts_at, r.departures?.ends_at), r.requested_places, money(r.total_amount), money(r.paid_amount), badge(r.status)]));
+}
+
+function agencyReservations(data) {
+  const requests = data.changeRequests || [], documents = data.documents || [];
+  if (!data.reservations.length) return '<p class="muted">Aún no hay reservas.</p>';
+  return `<div class="reservation-cards">${data.reservations.map(r => {
+    const ownRequests = requests.filter(item => item.reservation_id === r.id);
+    const ownDocuments = documents.filter(item => item.reservation_id === r.id);
+    const latest = ownRequests[0];
+    return `<article class="panel reservation-card">
+      <div class="reservation-heading"><div><h4>${esc(r.reservation_code)}</h4><p>${esc(r.departures?.trip_name || r.departures?.origin_name || r.departures?.origin_code || '')} · ${esc(formatDateRange(r.departures?.starts_at, r.departures?.ends_at))}</p></div>${badge(r.status)}</div>
+      <div class="reservation-summary"><span><strong>${r.requested_places}</strong> viajeros</span><span>Total <strong>${money(r.total_amount)}</strong></span><span>Pagado <strong>${money(r.paid_amount)}</strong></span></div>
+      ${latest ? `<p class="notice compact">Última solicitud: ${esc(latest.request_type)} · ${badge(latest.status)}</p>` : ''}
+      ${ownDocuments.length ? `<div class="document-list"><strong>Documentos (${ownDocuments.length})</strong>${ownDocuments.map(d => `<a target="_blank" href="/api/agency/reservations/${r.id}/documents/${d.id}">${esc(d.title)}</a>`).join('')}</div>` : '<p class="muted">Sin documentación adjunta.</p>'}
+      <div class="actions"><button data-reservation-change="${r.id}">Modificar o solicitar actuación</button><button class="ghost" data-reservation-upload="${r.id}">Subir documentación</button></div>
+      <div class="reservation-action-form hidden" data-reservation-form="${r.id}">
+        <form class="form-grid" data-change-form="${r.id}">
+          <label>Acción<select name="requestType"><option value="correccion">Corregir datos</option><option value="reactivacion" ${r.status === 'cancelada' ? 'selected' : ''}>Solicitar reactivación</option><option value="cancelacion">Solicitar cancelación</option></select></label>
+          ${input('requestedPlaces','Número de viajeros','number',r.requested_places,'1')}
+          ${input('leadTravellerName','Titular','','' + (r.lead_traveller_name || ''))}
+          <label>Teléfono<input name="leadTravellerPhone" value="${esc(r.lead_traveller_phone || '')}"></label>
+          <label>Correo<input name="leadTravellerEmail" type="email" value="${esc(r.lead_traveller_email || '')}"></label>
+          <label class="full">Datos que deben cambiar<textarea name="observations">${esc(r.agency_observations || '')}</textarea></label>
+          <label class="full">Motivo de la solicitud<textarea name="reason" required placeholder="Explica el error o cambio necesario"></textarea></label>
+          <div class="actions full"><button>Enviar a PROYEKTA para revisión</button><button type="button" class="ghost" data-close-change="${r.id}">Cerrar</button></div>
+        </form>
+      </div>
+    </article>`;
+  }).join('')}</div>`;
+}
+
+function bindAgencyReservationActions() {
+  document.querySelectorAll('[data-reservation-change]').forEach(button => button.addEventListener('click', () => document.querySelector(`[data-reservation-form="${button.dataset.reservationChange}"]`)?.classList.toggle('hidden')));
+  document.querySelectorAll('[data-close-change]').forEach(button => button.addEventListener('click', () => document.querySelector(`[data-reservation-form="${button.dataset.closeChange}"]`)?.classList.add('hidden')));
+  document.querySelectorAll('[data-change-form]').forEach(form => form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const submit = form.querySelector('button');
+    try {
+      submit.disabled = true;
+      await api(`/api/agency/reservations/${form.dataset.changeForm}/change-requests`, { method: 'POST', body: Object.fromEntries(new FormData(form)) });
+      alert('Solicitud enviada. PROYEKTA la revisará; la reserva original no se ha alterado mientras tanto.');
+      agencyView('agencyDashboard');
+    } catch (error) { alert(error.message); submit.disabled = false; }
+  }));
+  document.querySelectorAll('[data-reservation-upload]').forEach(button => button.addEventListener('click', () => uploadAgencyReservationDocument(button.dataset.reservationUpload)));
+}
+
+async function uploadAgencyReservationDocument(reservationId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/pdf,image/jpeg,image/png,image/webp';
+  input.setAttribute('capture', 'environment');
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) return alert('El archivo supera el máximo de 10 MB.');
+    try {
+      const data = await readFileAsDataUrl(file);
+      await api(`/api/agency/reservations/${reservationId}/documents`, { method: 'POST', body: { filename: file.name, mimeType: file.type, data } });
+      alert('Documento guardado en la reserva.');
+      agencyView('agencyDashboard');
+    } catch (error) { alert('No se pudo subir el documento: ' + error.message); }
+  };
+  input.click();
 }
 
 logoutBtn.addEventListener('click', async () => {
