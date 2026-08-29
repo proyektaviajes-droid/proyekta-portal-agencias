@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260829-agency-documents-ipad-v4';
+const APP_BUILD = '20260829-agency-documents-admin-speed-v5';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -301,9 +301,9 @@ async function adminView(view) {
       <div id="reservationDetail"></div>
       ${reservationCards(reservations)}
       <h3>Tabla completa</h3>
-      ${table(['Acciones','Codigo','Agencia','Salida','Viajeros','Total','Pagado','Pendiente','Estado pago','Estado reserva'], reservations.map(r => [
+      ${table(['Acciones','Codigo','Agencia','Salida','Documentos','Viajeros','Total','Pagado','Pendiente','Estado pago','Estado reserva'], reservations.map(r => [
         reservationActions(r),
-        r.reservation_code, r.agencies?.commercial_name, r.departures?.departure_code, r.requested_places, money(r.total_amount), money(r.paid_amount), money(Number(r.total_amount || 0) - Number(r.paid_amount || 0)), paymentStatus(r), badge(r.status)
+        r.reservation_code, r.agencies?.commercial_name, r.departures?.departure_code, r.agency_documents_count ? badge(`${r.agency_documents_count} de agencia`) : '0', r.requested_places, money(r.total_amount), money(r.paid_amount), money(Number(r.total_amount || 0) - Number(r.paid_amount || 0)), paymentStatus(r), badge(r.status)
       ]))}`;
     bindAdminReservationButtons(target);
   }
@@ -503,6 +503,7 @@ function reservationCards(reservations) {
         '<span><strong>Pendiente</strong> ' + money(pending) + '</span>' +
         '<span><strong>Pago</strong> ' + paymentStatus(r) + '</span>' +
         '<span><strong>Estado</strong> ' + badge(r.status) + '</span>' +
+        '<span><strong>Documentos agencia</strong> ' + esc(r.agency_documents_count || 0) + '</span>' +
       '</div>' +
     '</section>';
   }).join('') + '</div>';
@@ -618,6 +619,7 @@ function reservationDetail(data) {
   const payments = data.payments || [];
   const history = data.history || [];
   const incidents = data.incidents || [];
+  const documents = data.documents || [];
   const pending = Math.max(0, Number(r.total_amount || 0) - Number(r.paid_amount || 0));
   return html`
     <section class="panel reservation-detail">
@@ -650,6 +652,7 @@ function reservationDetail(data) {
         <div class="card"><h3>Viajeros</h3>${travellers.length ? table(['Nombre','Telefono','Email','DNI','Habitacion'], travellers.map(t => [fullName(t), t.phone || '', t.email || '', t.identity_document || '', t.room_type || ''])) : '<p class="muted">Aun no hay viajeros registrados.</p>'}</div>
         <div class="card"><h3>Pagos</h3>${payments.length ? table(['Fecha','Pagador','Importe','Metodo','Estado','Referencia','Acciones'], payments.map(p => [formatDateTime(p.created_at), p.payer_name || '', money(p.amount), p.method || '', badge(p.status), p.external_reference || '', paymentActions(p)])) : '<p class="muted">Aun no hay pagos comunicados.</p>'}</div>
       </div>
+      <div class="card"><h3>Documentación enviada por la agencia</h3>${documents.length ? table(['Fecha','Documento','Tipo','Enviado por','Acciones'], documents.map(d => [formatDateTime(d.created_at), d.title || '', d.document_type || '', d.uploaded_by_type === 'agency' ? 'Agencia' : d.uploaded_by_type || '', `<a class="button-link" target="_blank" href="/api/admin/reservations/${r.id}/documents/${d.id}">Abrir documento</a>`])) : '<p class="muted">La agencia todavía no ha enviado documentación para esta reserva.</p>'}</div>
       <div class="grid two">
         <div class="card"><h3>Historial</h3>${history.length ? table(['Fecha','Antes','Despues','Motivo'], history.map(h => [formatDateTime(h.created_at), h.old_status || '', h.new_status || '', h.reason || ''])) : '<p class="muted">Sin historial todavia.</p>'}</div>
         <div class="card"><h3>Incidencias</h3>${incidents.length ? table(['Fecha','Categoria','Prioridad','Estado','Descripcion'], incidents.map(i => [formatDateTime(i.created_at), i.category || '', i.priority || '', badge(i.status), i.description || ''])) : '<p class="muted">Sin incidencias.</p>'}</div>
@@ -910,8 +913,11 @@ function renderAgency() {
   wireNav(app, agencyView);
 }
 
-async function loadAgencyDashboard() {
+async function loadAgencyDashboard(force = false) {
+  const fresh = state.dashboard && Date.now() - Number(state.dashboardLoadedAt || 0) < 30000;
+  if (!force && fresh) return state.dashboard;
   state.dashboard = await api('/api/agency/dashboard');
+  state.dashboardLoadedAt = Date.now();
   return state.dashboard;
 }
 
@@ -1024,6 +1030,7 @@ async function createReservation(e) {
   const data = Object.fromEntries(new FormData(e.currentTarget));
   const result = await api('/api/agency/reservations', { method: 'POST', body: data });
   alert(`Solicitud recibida: ${result.reservation.reservation_code}`);
+  state.dashboard = null;
   agencyView('agencyDashboard');
 }
 
@@ -1031,6 +1038,7 @@ async function createTraveller(e) {
   e.preventDefault();
   await api('/api/agency/travellers', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
   alert('Viajero guardado');
+  state.dashboard = null;
   agencyView('agencyTravellers');
 }
 
@@ -1044,6 +1052,7 @@ async function createPayment(e) {
   e.preventDefault();
   await api('/api/agency/payments', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
   alert('Pago comunicado. PROYEKTA lo revisará y verificará.');
+  state.dashboard = null;
   agencyView('agencyPayments');
 }
 
@@ -1051,6 +1060,7 @@ async function createIncident(e) {
   e.preventDefault();
   await api('/api/agency/incidents', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
   alert('Incidencia registrada');
+  state.dashboard = null;
   agencyView('agencyIncidents');
 }
 
@@ -1887,6 +1897,7 @@ function bindAgencyReservationActions() {
       submit.disabled = true;
       await api(`/api/agency/reservations/${form.dataset.changeForm}/change-requests`, { method: 'POST', body: Object.fromEntries(new FormData(form)) });
       alert('Solicitud enviada. PROYEKTA la revisará; la reserva original no se ha alterado mientras tanto.');
+      state.dashboard = null;
       agencyView('agencyDashboard');
     } catch (error) { alert(error.message); submit.disabled = false; }
   }));
@@ -1897,6 +1908,7 @@ function bindAgencyReservationActions() {
       button.disabled = true;
       await api(`/api/agency/reservations/${button.dataset.reservationId}/documents/${button.dataset.deleteReservationDocument}`, { method: 'DELETE' });
       alert('Documento borrado.');
+      state.dashboard = null;
       agencyView('agencyDashboard');
     } catch (error) { alert('No se pudo borrar: ' + error.message); button.disabled = false; }
   }));
@@ -1913,16 +1925,38 @@ async function uploadAgencyReservationDocument(reservationId) {
     if (file.size > 25 * 1024 * 1024) return alert('El archivo supera el máximo de 25 MB.');
     try {
       if (status) status.textContent = `Subiendo ${file.name || 'foto'}… No cierres esta pantalla.`;
-      const data = await readFileAsDataUrl(file);
-      const saved = await api(`/api/agency/reservations/${reservationId}/documents`, { method: 'POST', body: { filename: file.name || `foto-${Date.now()}.jpg`, mimeType: file.type, data } });
+      const prepared = await optimiseImageForUpload(file);
+      const data = await readFileAsDataUrl(prepared.file);
+      const saved = await api(`/api/agency/reservations/${reservationId}/documents`, { method: 'POST', body: { filename: prepared.name, mimeType: prepared.mimeType, data } });
       const verified = await api(`/api/agency/reservations/${reservationId}/documents?t=${Date.now()}`);
       if (!verified.documents?.some(item => item.id === saved.document?.id)) throw new Error('El servidor no ha confirmado el archivo después de subirlo.');
       if (status) status.textContent = 'Documento guardado y verificado.';
       alert('Foto o documento guardado y verificado en la reserva.');
+      state.dashboard = null;
       agencyView('agencyDashboard');
     } catch (error) { if (status) status.textContent = `Error: ${error.message}`; alert('No se pudo subir el documento: ' + error.message); }
   };
   input.click();
+}
+
+async function optimiseImageForUpload(file) {
+  if (!file.type.startsWith('image/') || file.size <= 2 * 1024 * 1024) return { file, name: file.name || `foto-${Date.now()}.jpg`, mimeType: file.type };
+  try {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = url; });
+    const scale = Math.min(1, 2400 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    const blob = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('No se pudo optimizar la imagen')), 'image/jpeg', 0.86));
+    const base = String(file.name || `foto-${Date.now()}`).replace(/\.[^.]+$/, '');
+    return { file: blob, name: `${base}.jpg`, mimeType: 'image/jpeg' };
+  } catch {
+    return { file, name: file.name || `foto-${Date.now()}.jpg`, mimeType: file.type };
+  }
 }
 
 logoutBtn.addEventListener('click', async () => {

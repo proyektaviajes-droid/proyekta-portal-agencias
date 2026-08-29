@@ -44,3 +44,15 @@ test('la agencia puede borrar únicamente sus propios documentos', () => {
   assert.match(server, /uploaded_by_type: 'eq\.agency'/);
   assert.match(server, /deleteAccountingFile\(document\.storage_path\)/);
 });
+
+test('administración recibe los documentos dentro de la ficha de reserva', () => {
+  assert.match(server, /reservation_document_opened_by_admin/);
+  assert.match(app, /Documentación enviada por la agencia/);
+  assert.match(app, /Abrir documento/);
+});
+
+test('el panel evita recargas repetidas y optimiza fotos grandes del iPad', () => {
+  assert.match(app, /dashboardLoadedAt/);
+  assert.match(app, /optimiseImageForUpload/);
+  assert.match(app, /2400 \/ Math\.max/);
+});

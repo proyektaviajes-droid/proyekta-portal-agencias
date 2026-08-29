@@ -520,7 +520,7 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260829-agency-documents-ipad-v4' });
+      return json(res, 200, { build: '20260829-agency-documents-admin-speed-v5' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {
@@ -1216,21 +1216,36 @@ async function adminApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/admin/reservations') {
-    const reservations = await supa('reservations', { query: { deleted_at: 'is.null', select: '*,agencies(commercial_name,agency_code,main_email),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at,deposit_amount)', order: 'created_at.desc' } });
-    return json(res, 200, { reservations });
+    const [reservations, documents] = await Promise.all([
+      supa('reservations', { query: { deleted_at: 'is.null', select: '*,agencies(commercial_name,agency_code,main_email),departures(departure_code,trip_name,origin_name,origin_code,starts_at,ends_at,deposit_amount)', order: 'created_at.desc' } }),
+      supa('documents', { query: { select: 'id,reservation_id', uploaded_by_type: 'eq.agency' } })
+    ]);
+    const documentCounts = documents.reduce((counts, document) => { if (document.reservation_id) counts[document.reservation_id] = (counts[document.reservation_id] || 0) + 1; return counts; }, {});
+    return json(res, 200, { reservations: reservations.map(reservation => ({ ...reservation, agency_documents_count: documentCounts[reservation.id] || 0 })) });
   }
 
   if (req.method === 'GET' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+$/)) {
     const id = url.pathname.split('/')[4];
     const reservation = await getReservationWithContext(id);
     if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
-    const [travellers, payments, history, incidents] = await Promise.all([
+    const [travellers, payments, history, incidents, documents] = await Promise.all([
       supa('travellers', { query: { reservation_id: `eq.${id}`, order: 'created_at.asc' } }),
       supa('payments', { query: { reservation_id: `eq.${id}`, order: 'created_at.desc' } }),
       supa('reservation_status_history', { query: { reservation_id: `eq.${id}`, order: 'created_at.desc' } }),
-      supa('incidents', { query: { reservation_id: `eq.${id}`, order: 'created_at.desc' } })
+      supa('incidents', { query: { reservation_id: `eq.${id}`, order: 'created_at.desc' } }),
+      supa('documents', { query: { reservation_id: `eq.${id}`, order: 'created_at.desc' } })
     ]);
-    return json(res, 200, { reservation, travellers, payments, history, incidents });
+    return json(res, 200, { reservation, travellers, payments, history, incidents, documents });
+  }
+
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+\/documents\/[^/]+$/)) {
+    const parts = url.pathname.split('/');
+    const reservationId = parts[4], documentId = parts[6];
+    const document = (await supa('documents', { query: { id: `eq.${documentId}`, reservation_id: `eq.${reservationId}`, limit: '1' } }))[0];
+    if (!document) return json(res, 404, { error: 'Documento no encontrado' });
+    const loaded = await downloadAccountingFile(document.storage_path);
+    await audit(session, 'reservation_document_opened_by_admin', 'documents', document.id, { reservationId });
+    return binary(res, document.title, loaded.mimeType, loaded.buffer);
   }
 
   if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+\/payment-instructions$/)) {
@@ -1900,11 +1915,11 @@ async function agencyApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/agency/dashboard') {
     const [departures, reservations, payments, incidents, changeRequests, documents] = await Promise.all([
       supa('departures', { query: { visible_to_agencies: 'eq.true', status: 'in.(disponible,pocas_plazas,confirmada)', order: 'starts_at.asc' } }),
-      supa('reservations', { query: { agency_id: `eq.${session.agencyId}`, select: '*,departures(trip_name,departure_code,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc' } }),
-      supa('payments', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc' } }),
-      supa('incidents', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc' } }),
-      supa('change_requests', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc' } }),
-      supa('documents', { query: { agency_id: `eq.${session.agencyId}`, uploaded_by_type: 'eq.agency', order: 'created_at.desc' } })
+      supa('reservations', { query: { agency_id: `eq.${session.agencyId}`, select: '*,departures(trip_name,departure_code,origin_name,origin_code,starts_at,ends_at)', order: 'created_at.desc', limit: '200' } }),
+      supa('payments', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc', limit: '300' } }),
+      supa('incidents', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc', limit: '200' } }),
+      supa('change_requests', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc', limit: '200' } }),
+      supa('documents', { query: { agency_id: `eq.${session.agencyId}`, uploaded_by_type: 'eq.agency', order: 'created_at.desc', limit: '300' } })
     ]);
     return json(res, 200, { departures, reservations, payments, incidents, changeRequests, documents });
   }
