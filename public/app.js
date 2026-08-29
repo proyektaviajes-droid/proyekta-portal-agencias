@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260829-agency-actions-ipad-v2';
+const APP_BUILD = '20260829-agency-documents-ipad-v3';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -1859,7 +1859,8 @@ function agencyReservations(data) {
       <div class="reservation-summary"><span><strong>${r.requested_places}</strong> viajeros</span><span>Total <strong>${money(r.total_amount)}</strong></span><span>Pagado <strong>${money(r.paid_amount)}</strong></span></div>
       ${latest ? `<p class="notice compact">Última solicitud: ${esc(latest.request_type)} · ${badge(latest.status)}</p>` : ''}
       ${ownDocuments.length ? `<div class="document-list"><strong>Documentos (${ownDocuments.length})</strong>${ownDocuments.map(d => `<a target="_blank" href="/api/agency/reservations/${r.id}/documents/${d.id}">${esc(d.title)}</a>`).join('')}</div>` : '<p class="muted">Sin documentación adjunta.</p>'}
-      <div class="actions"><button data-reservation-change="${r.id}">Modificar o solicitar actuación</button><button class="ghost" data-reservation-upload="${r.id}">Subir documentación</button></div>
+      <div class="actions"><button data-reservation-change="${r.id}">Modificar o solicitar actuación</button><button class="ghost" data-reservation-upload="${r.id}">Elegir foto o documento</button></div>
+      <p class="muted" data-upload-status="${r.id}"></p>
       <div class="reservation-action-form hidden" data-reservation-form="${r.id}">
         <form class="form-grid" data-change-form="${r.id}">
           <label>Acción<select name="requestType"><option value="correccion">Corregir datos</option><option value="reactivacion" ${r.status === 'cancelada' ? 'selected' : ''}>Solicitar reactivación</option><option value="cancelacion">Solicitar cancelación</option></select></label>
@@ -1895,18 +1896,22 @@ function bindAgencyReservationActions() {
 async function uploadAgencyReservationDocument(reservationId) {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = 'application/pdf,image/jpeg,image/png,image/webp';
-  input.setAttribute('capture', 'environment');
+  input.accept = 'application/pdf,image/*,.heic,.heif';
   input.onchange = async () => {
     const file = input.files?.[0];
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) return alert('El archivo supera el máximo de 10 MB.');
+    const status = document.querySelector(`[data-upload-status="${reservationId}"]`);
+    if (file.size > 25 * 1024 * 1024) return alert('El archivo supera el máximo de 25 MB.');
     try {
+      if (status) status.textContent = `Subiendo ${file.name || 'foto'}… No cierres esta pantalla.`;
       const data = await readFileAsDataUrl(file);
-      await api(`/api/agency/reservations/${reservationId}/documents`, { method: 'POST', body: { filename: file.name, mimeType: file.type, data } });
-      alert('Documento guardado en la reserva.');
+      const saved = await api(`/api/agency/reservations/${reservationId}/documents`, { method: 'POST', body: { filename: file.name || `foto-${Date.now()}.jpg`, mimeType: file.type, data } });
+      const verified = await api(`/api/agency/reservations/${reservationId}/documents?t=${Date.now()}`);
+      if (!verified.documents?.some(item => item.id === saved.document?.id)) throw new Error('El servidor no ha confirmado el archivo después de subirlo.');
+      if (status) status.textContent = 'Documento guardado y verificado.';
+      alert('Foto o documento guardado y verificado en la reserva.');
       agencyView('agencyDashboard');
-    } catch (error) { alert('No se pudo subir el documento: ' + error.message); }
+    } catch (error) { if (status) status.textContent = `Error: ${error.message}`; alert('No se pudo subir el documento: ' + error.message); }
   };
   input.click();
 }

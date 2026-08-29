@@ -520,7 +520,7 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260829-agency-actions-ipad-v2' });
+      return json(res, 200, { build: '20260829-agency-documents-ipad-v3' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {
@@ -2012,6 +2012,14 @@ async function agencyApi(req, res, url) {
     return json(res, 201, { document });
   }
 
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/agency\/reservations\/[^/]+\/documents$/)) {
+    const reservationId = url.pathname.split('/')[4];
+    const reservation = (await supa('reservations', { query: { id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const documents = await supa('documents', { query: { reservation_id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}`, uploaded_by_type: 'eq.agency', order: 'created_at.desc' } });
+    return json(res, 200, { documents });
+  }
+
   if (req.method === 'GET' && url.pathname.match(/^\/api\/agency\/reservations\/[^/]+\/documents\/[^/]+$/)) {
     const parts = url.pathname.split('/');
     const reservationId = parts[4], documentId = parts[6];
@@ -2701,14 +2709,17 @@ async function attachAccountingFile(documentId, input, session) {
 
 function parseUpload(input) {
   const data = required(input.data, 'Archivo');
-  const mimeType = input.mimeType || String(data).match(/^data:([^;]+);base64,/)?.[1] || 'application/octet-stream';
-  if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
-    throw new Error('Formato no permitido. Usa PDF, JPG, PNG o WEBP.');
+  const filename = String(input.filename || '').toLowerCase();
+  const inferred = filename.endsWith('.heic') ? 'image/heic' : filename.endsWith('.heif') ? 'image/heif' : '';
+  const declared = input.mimeType || String(data).match(/^data:([^;]+);base64,/)?.[1] || '';
+  const mimeType = (!declared || declared === 'application/octet-stream') && inferred ? inferred : declared || 'application/octet-stream';
+  if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mimeType)) {
+    throw new Error('Formato no permitido. Usa PDF, JPG, PNG, WEBP, HEIC o HEIF.');
   }
   const base64 = String(data).includes(',') ? String(data).split(',').pop() : String(data);
   const buffer = Buffer.from(base64, 'base64');
   if (!buffer.length) throw new Error('Archivo vacio');
-  if (buffer.length > 10 * 1024 * 1024) throw new Error('Archivo demasiado grande. Maximo 10 MB.');
+  if (buffer.length > 25 * 1024 * 1024) throw new Error('Archivo demasiado grande. Máximo 25 MB.');
   return { buffer, mimeType };
 }
 

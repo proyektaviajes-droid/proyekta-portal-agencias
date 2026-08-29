@@ -19,8 +19,11 @@ test('los documentos se guardan privados y se validan por reserva y agencia', ()
 
 test('el panel ofrece acciones y subida compatible con iPad', () => {
   assert.match(app, /Modificar o solicitar actuación/);
-  assert.match(app, /Subir documentación/);
-  assert.match(app, /capture', 'environment'/);
+  assert.match(app, /Elegir foto o documento/);
+  assert.doesNotMatch(app, /setAttribute\('capture'/);
+  assert.match(server, /image\/heic/);
+  assert.match(server, /Máximo 25 MB/);
+  assert.match(app, /Documento guardado y verificado/);
 });
 
 test('administración puede aprobar o rechazar sin perder trazabilidad', () => {
