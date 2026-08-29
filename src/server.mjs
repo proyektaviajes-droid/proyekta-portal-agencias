@@ -533,7 +533,7 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260829-agency-images-fast-v6' });
+      return json(res, 200, { build: '20260829-admin-reservation-documents-v7' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {
@@ -1261,6 +1261,25 @@ async function adminApi(req, res, url) {
     return binary(res, document.title, loaded.mimeType, loaded.buffer);
   }
 
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+\/documents$/)) {
+    const reservationId = url.pathname.split('/')[4];
+    const reservation = await getReservationWithContext(reservationId);
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const encodedFilename = req.headers['x-proyekta-filename'];
+    if (!encodedFilename) return json(res, 400, { error: 'Falta el nombre del archivo' });
+    const filename = safeFilename(decodeURIComponent(String(encodedFilename)));
+    const declaredMime = String(req.headers['content-type'] || 'application/octet-stream').split(';')[0];
+    const lowerName = filename.toLowerCase();
+    const mimeType = declaredMime === 'application/octet-stream' && lowerName.endsWith('.heic') ? 'image/heic' : declaredMime === 'application/octet-stream' && lowerName.endsWith('.heif') ? 'image/heif' : declaredMime;
+    if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mimeType)) return json(res, 400, { error: 'Formato no permitido' });
+    const buffer = await bodyBuffer(req);
+    const storagePath = `admin-reservations/${reservation.agency_id}/${reservation.id}/${Date.now()}-${filename}`;
+    await uploadAccountingFile(storagePath, mimeType, buffer);
+    const document = (await supa('documents', { method: 'POST', body: [{ agency_id: reservation.agency_id, reservation_id: reservation.id, document_type: req.headers['x-proyekta-document-type'] || 'documentacion_reserva', title: filename, storage_path: storagePath, visibility: 'agency', uploaded_by_type: 'admin', uploaded_by_id: session.userId || null }] }))[0];
+    await audit(session, 'reservation_document_uploaded_by_admin', 'documents', document.id, { reservationId, filename });
+    return json(res, 201, { document });
+  }
+
   if (req.method === 'POST' && url.pathname.match(/^\/api\/admin\/reservations\/[^/]+\/payment-instructions$/)) {
     const id = url.pathname.split('/')[4];
     const reservation = await getReservationWithContext(id);
@@ -1932,7 +1951,7 @@ async function agencyApi(req, res, url) {
       supa('payments', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc', limit: '300' } }),
       supa('incidents', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc', limit: '200' } }),
       supa('change_requests', { query: { agency_id: `eq.${session.agencyId}`, order: 'created_at.desc', limit: '200' } }),
-      supa('documents', { query: { agency_id: `eq.${session.agencyId}`, uploaded_by_type: 'eq.agency', order: 'created_at.desc', limit: '300' } })
+      supa('documents', { query: { agency_id: `eq.${session.agencyId}`, visibility: 'eq.agency', order: 'created_at.desc', limit: '300' } })
     ]);
     return json(res, 200, { departures, reservations, payments, incidents, changeRequests, documents });
   }

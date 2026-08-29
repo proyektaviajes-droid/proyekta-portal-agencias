@@ -47,7 +47,7 @@ test('la agencia puede borrar únicamente sus propios documentos', () => {
 
 test('administración recibe los documentos dentro de la ficha de reserva', () => {
   assert.match(server, /reservation_document_opened_by_admin/);
-  assert.match(app, /Documentación enviada por la agencia/);
+  assert.match(app, /Documentación de la reserva/);
   assert.match(app, /Abrir documento/);
 });
 
@@ -62,4 +62,12 @@ test('las imágenes viajan en binario sin el sobrepeso de base64', () => {
   assert.match(server, /bodyBuffer\(req\)/);
   assert.match(app, /body: prepared\.file/);
   assert.match(app, /500 \* 1024/);
+});
+
+test('administración puede adjuntar documentos visibles para la agencia', () => {
+  assert.match(server, /reservation_document_uploaded_by_admin/);
+  assert.match(server, /visibility: 'agency', uploaded_by_type: 'admin'/);
+  assert.match(app, /Añadir documento/);
+  assert.match(app, /uploadAdminReservationDocument/);
+  assert.match(app, /Enviado por PROYEKTA/);
 });

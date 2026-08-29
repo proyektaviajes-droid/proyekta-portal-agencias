@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260829-agency-images-fast-v6';
+const APP_BUILD = '20260829-admin-reservation-documents-v7';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -600,6 +600,7 @@ async function openAdminReservation(id) {
     box.innerHTML = reservationDetail(data);
     bindAdminReservationButtons(box);
     bindAdminPaymentButtons(box, id);
+    box.querySelector('[data-admin-upload-reservation]')?.addEventListener('click', () => uploadAdminReservationDocument(id));
     box.querySelector('[data-close-reservation]')?.addEventListener('click', () => { box.innerHTML = ''; });
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
@@ -652,7 +653,7 @@ function reservationDetail(data) {
         <div class="card"><h3>Viajeros</h3>${travellers.length ? table(['Nombre','Telefono','Email','DNI','Habitacion'], travellers.map(t => [fullName(t), t.phone || '', t.email || '', t.identity_document || '', t.room_type || ''])) : '<p class="muted">Aun no hay viajeros registrados.</p>'}</div>
         <div class="card"><h3>Pagos</h3>${payments.length ? table(['Fecha','Pagador','Importe','Metodo','Estado','Referencia','Acciones'], payments.map(p => [formatDateTime(p.created_at), p.payer_name || '', money(p.amount), p.method || '', badge(p.status), p.external_reference || '', paymentActions(p)])) : '<p class="muted">Aun no hay pagos comunicados.</p>'}</div>
       </div>
-      <div class="card"><h3>Documentación enviada por la agencia</h3>${documents.length ? table(['Fecha','Documento','Tipo','Enviado por','Acciones'], documents.map(d => [formatDateTime(d.created_at), d.title || '', d.document_type || '', d.uploaded_by_type === 'agency' ? 'Agencia' : d.uploaded_by_type || '', `<a class="button-link" target="_blank" href="/api/admin/reservations/${r.id}/documents/${d.id}">Abrir documento</a>`])) : '<p class="muted">La agencia todavía no ha enviado documentación para esta reserva.</p>'}</div>
+      <div class="card"><div class="toolbar"><h3>Documentación de la reserva</h3><button type="button" data-admin-upload-reservation="${r.id}">Añadir documento</button></div><p class="muted" data-admin-upload-status></p>${documents.length ? table(['Fecha','Documento','Tipo','Enviado por','Acciones'], documents.map(d => [formatDateTime(d.created_at), d.title || '', d.document_type || '', d.uploaded_by_type === 'agency' ? 'Agencia' : 'Administración', `<a class="button-link" target="_blank" href="/api/admin/reservations/${r.id}/documents/${d.id}">Abrir documento</a>`])) : '<p class="muted">Todavía no hay documentación asociada a esta reserva.</p>'}</div>
       <div class="grid two">
         <div class="card"><h3>Historial</h3>${history.length ? table(['Fecha','Antes','Despues','Motivo'], history.map(h => [formatDateTime(h.created_at), h.old_status || '', h.new_status || '', h.reason || ''])) : '<p class="muted">Sin historial todavia.</p>'}</div>
         <div class="card"><h3>Incidencias</h3>${incidents.length ? table(['Fecha','Categoria','Prioridad','Estado','Descripcion'], incidents.map(i => [formatDateTime(i.created_at), i.category || '', i.priority || '', badge(i.status), i.description || ''])) : '<p class="muted">Sin incidencias.</p>'}</div>
@@ -1868,7 +1869,7 @@ function agencyReservations(data) {
       <div class="reservation-heading"><div><h4>${esc(r.reservation_code)}</h4><p>${esc(r.departures?.trip_name || r.departures?.origin_name || r.departures?.origin_code || '')} · ${esc(formatDateRange(r.departures?.starts_at, r.departures?.ends_at))}</p></div>${badge(r.status)}</div>
       <div class="reservation-summary"><span><strong>${r.requested_places}</strong> viajeros</span><span>Total <strong>${money(r.total_amount)}</strong></span><span>Pagado <strong>${money(r.paid_amount)}</strong></span></div>
       ${latest ? `<p class="notice compact">Última solicitud: ${esc(latest.request_type)} · ${badge(latest.status)}</p>` : ''}
-      ${ownDocuments.length ? `<div class="document-list"><strong>Documentos (${ownDocuments.length})</strong>${ownDocuments.map(d => `<span class="document-item"><a target="_blank" href="/api/agency/reservations/${r.id}/documents/${d.id}">${esc(d.title)}</a><button type="button" class="ghost danger small" data-delete-reservation-document="${d.id}" data-reservation-id="${r.id}" data-document-name="${esc(d.title)}">Borrar</button></span>`).join('')}</div>` : '<p class="muted">Sin documentación adjunta.</p>'}
+      ${ownDocuments.length ? `<div class="document-list"><strong>Documentos (${ownDocuments.length})</strong>${ownDocuments.map(d => `<span class="document-item"><a target="_blank" href="/api/agency/reservations/${r.id}/documents/${d.id}">${esc(d.title)}</a>${d.uploaded_by_type === 'agency' ? `<button type="button" class="ghost danger small" data-delete-reservation-document="${d.id}" data-reservation-id="${r.id}" data-document-name="${esc(d.title)}">Borrar</button>` : '<small>Enviado por PROYEKTA</small>'}</span>`).join('')}</div>` : '<p class="muted">Sin documentación adjunta.</p>'}
       <div class="actions"><button data-reservation-change="${r.id}">Modificar o solicitar actuación</button><button class="ghost" data-reservation-upload="${r.id}">Elegir foto o documento</button></div>
       <p class="muted" data-upload-status="${r.id}"></p>
       <div class="reservation-action-form hidden" data-reservation-form="${r.id}">
@@ -1937,6 +1938,29 @@ async function uploadAgencyReservationDocument(reservationId) {
       state.dashboard = null;
       agencyView('agencyDashboard');
     } catch (error) { if (status) status.textContent = `Error: ${error.message}`; alert('No se pudo subir el documento: ' + error.message); }
+  };
+  input.click();
+}
+
+async function uploadAdminReservationDocument(reservationId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/pdf,image/*,.heic,.heif';
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const status = document.querySelector('[data-admin-upload-status]');
+    if (file.size > 25 * 1024 * 1024) return alert('El archivo supera el máximo de 25 MB.');
+    try {
+      if (status) status.textContent = `Preparando ${file.name || 'documento'}…`;
+      const prepared = await optimiseImageForUpload(file);
+      if (status) status.textContent = `Enviando ${prepared.name}…`;
+      const response = await fetch(`/api/admin/reservations/${reservationId}/documents`, { method: 'POST', headers: { 'content-type': prepared.mimeType || 'application/octet-stream', 'x-proyekta-filename': encodeURIComponent(prepared.name), 'x-proyekta-document-type': 'documentacion_reserva' }, body: prepared.file });
+      const saved = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(saved.error || 'No se pudo enviar el archivo');
+      await openAdminReservation(reservationId);
+      alert('Documento guardado en la reserva y visible para la agencia.');
+    } catch (error) { if (status) status.textContent = `Error: ${error.message}`; alert('No se pudo subir: ' + error.message); }
   };
   input.click();
 }
