@@ -161,6 +161,19 @@ async function bodyJson(req) {
   return JSON.parse(body);
 }
 
+async function bodyBuffer(req, maxBytes = 25 * 1024 * 1024) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > maxBytes) throw new Error('Archivo demasiado grande. Máximo 25 MB.');
+    chunks.push(chunk);
+  }
+  const buffer = Buffer.concat(chunks);
+  if (!buffer.length) throw new Error('Archivo vacío');
+  return buffer;
+}
+
 function binary(res, filename, mimeType, buffer) {
   res.writeHead(200, {
     'content-type': mimeType || 'application/octet-stream',
@@ -520,7 +533,7 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260829-agency-documents-admin-speed-v5' });
+      return json(res, 200, { build: '20260829-agency-images-fast-v6' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {
@@ -2015,10 +2028,21 @@ async function agencyApi(req, res, url) {
 
   if (req.method === 'POST' && url.pathname.match(/^\/api\/agency\/reservations\/[^/]+\/documents$/)) {
     const reservationId = url.pathname.split('/')[4];
-    const input = await bodyJson(req);
     const reservation = (await supa('reservations', { query: { id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
     if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
-    const parsed = parseUpload(input);
+    const binaryFilename = req.headers['x-proyekta-filename'];
+    let input, parsed;
+    if (binaryFilename) {
+      input = { filename: decodeURIComponent(String(binaryFilename)), documentType: req.headers['x-proyekta-document-type'] || 'documentacion_reserva' };
+      const declaredMime = String(req.headers['content-type'] || 'application/octet-stream').split(';')[0];
+      const lowerName = input.filename.toLowerCase();
+      const inferredMime = lowerName.endsWith('.heic') ? 'image/heic' : lowerName.endsWith('.heif') ? 'image/heif' : declaredMime;
+      parsed = { buffer: await bodyBuffer(req), mimeType: declaredMime === 'application/octet-stream' ? inferredMime : declaredMime };
+      if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(parsed.mimeType)) return json(res, 400, { error: 'Formato no permitido' });
+    } else {
+      input = await bodyJson(req);
+      parsed = parseUpload(input);
+    }
     const filename = safeFilename(input.filename || `documento-${reservation.reservation_code}`);
     const storagePath = `agency-reservations/${session.agencyId}/${reservation.id}/${Date.now()}-${filename}`;
     await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);

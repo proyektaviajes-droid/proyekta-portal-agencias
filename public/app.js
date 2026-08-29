@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260829-agency-documents-admin-speed-v5';
+const APP_BUILD = '20260829-agency-images-fast-v6';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -1924,10 +1924,12 @@ async function uploadAgencyReservationDocument(reservationId) {
     const status = document.querySelector(`[data-upload-status="${reservationId}"]`);
     if (file.size > 25 * 1024 * 1024) return alert('El archivo supera el máximo de 25 MB.');
     try {
-      if (status) status.textContent = `Subiendo ${file.name || 'foto'}… No cierres esta pantalla.`;
+      if (status) status.textContent = `Preparando ${file.name || 'foto'}…`;
       const prepared = await optimiseImageForUpload(file);
-      const data = await readFileAsDataUrl(prepared.file);
-      const saved = await api(`/api/agency/reservations/${reservationId}/documents`, { method: 'POST', body: { filename: prepared.name, mimeType: prepared.mimeType, data } });
+      if (status) status.textContent = `Enviando ${prepared.name} (${Math.max(1, Math.round(prepared.file.size / 1024))} KB)…`;
+      const response = await fetch(`/api/agency/reservations/${reservationId}/documents`, { method: 'POST', headers: { 'content-type': prepared.mimeType || 'application/octet-stream', 'x-proyekta-filename': encodeURIComponent(prepared.name), 'x-proyekta-document-type': 'documentacion_reserva' }, body: prepared.file });
+      const saved = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(saved.error || 'No se pudo enviar el archivo');
       const verified = await api(`/api/agency/reservations/${reservationId}/documents?t=${Date.now()}`);
       if (!verified.documents?.some(item => item.id === saved.document?.id)) throw new Error('El servidor no ha confirmado el archivo después de subirlo.');
       if (status) status.textContent = 'Documento guardado y verificado.';
@@ -1940,18 +1942,18 @@ async function uploadAgencyReservationDocument(reservationId) {
 }
 
 async function optimiseImageForUpload(file) {
-  if (!file.type.startsWith('image/') || file.size <= 2 * 1024 * 1024) return { file, name: file.name || `foto-${Date.now()}.jpg`, mimeType: file.type };
+  if (!file.type.startsWith('image/') || file.size <= 500 * 1024) return { file, name: file.name || `foto-${Date.now()}.jpg`, mimeType: file.type };
   try {
     const image = new Image();
     const url = URL.createObjectURL(file);
     await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = url; });
-    const scale = Math.min(1, 2400 / Math.max(image.naturalWidth, image.naturalHeight));
+    const scale = Math.min(1, 1800 / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
     canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
     URL.revokeObjectURL(url);
-    const blob = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('No se pudo optimizar la imagen')), 'image/jpeg', 0.86));
+    const blob = await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('No se pudo optimizar la imagen')), 'image/jpeg', 0.78));
     const base = String(file.name || `foto-${Date.now()}`).replace(/\.[^.]+$/, '');
     return { file: blob, name: `${base}.jpg`, mimeType: 'image/jpeg' };
   } catch {

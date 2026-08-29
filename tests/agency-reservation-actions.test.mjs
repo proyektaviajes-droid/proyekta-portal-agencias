@@ -54,5 +54,12 @@ test('administración recibe los documentos dentro de la ficha de reserva', () =
 test('el panel evita recargas repetidas y optimiza fotos grandes del iPad', () => {
   assert.match(app, /dashboardLoadedAt/);
   assert.match(app, /optimiseImageForUpload/);
-  assert.match(app, /2400 \/ Math\.max/);
+  assert.match(app, /1800 \/ Math\.max/);
+});
+
+test('las imágenes viajan en binario sin el sobrepeso de base64', () => {
+  assert.match(server, /x-proyekta-filename/);
+  assert.match(server, /bodyBuffer\(req\)/);
+  assert.match(app, /body: prepared\.file/);
+  assert.match(app, /500 \* 1024/);
 });

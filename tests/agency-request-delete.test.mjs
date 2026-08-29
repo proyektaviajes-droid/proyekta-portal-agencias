@@ -37,5 +37,5 @@ test('una solicitud convertida renderiza realmente el botón Borrar', () => {
 
 test('el HTML obliga a descargar la versión nueva del módulo', () => {
   const index = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(index, /app\.js\?v=20260829-agency-documents-admin-speed-v5/);
+  assert.match(index, /app\.js\?v=20260829-agency-images-fast-v6/);
 });
