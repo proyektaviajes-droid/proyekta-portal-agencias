@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260829-agency-documents-ipad-v3';
+const APP_BUILD = '20260829-agency-documents-ipad-v4';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -1858,7 +1858,7 @@ function agencyReservations(data) {
       <div class="reservation-heading"><div><h4>${esc(r.reservation_code)}</h4><p>${esc(r.departures?.trip_name || r.departures?.origin_name || r.departures?.origin_code || '')} · ${esc(formatDateRange(r.departures?.starts_at, r.departures?.ends_at))}</p></div>${badge(r.status)}</div>
       <div class="reservation-summary"><span><strong>${r.requested_places}</strong> viajeros</span><span>Total <strong>${money(r.total_amount)}</strong></span><span>Pagado <strong>${money(r.paid_amount)}</strong></span></div>
       ${latest ? `<p class="notice compact">Última solicitud: ${esc(latest.request_type)} · ${badge(latest.status)}</p>` : ''}
-      ${ownDocuments.length ? `<div class="document-list"><strong>Documentos (${ownDocuments.length})</strong>${ownDocuments.map(d => `<a target="_blank" href="/api/agency/reservations/${r.id}/documents/${d.id}">${esc(d.title)}</a>`).join('')}</div>` : '<p class="muted">Sin documentación adjunta.</p>'}
+      ${ownDocuments.length ? `<div class="document-list"><strong>Documentos (${ownDocuments.length})</strong>${ownDocuments.map(d => `<span class="document-item"><a target="_blank" href="/api/agency/reservations/${r.id}/documents/${d.id}">${esc(d.title)}</a><button type="button" class="ghost danger small" data-delete-reservation-document="${d.id}" data-reservation-id="${r.id}" data-document-name="${esc(d.title)}">Borrar</button></span>`).join('')}</div>` : '<p class="muted">Sin documentación adjunta.</p>'}
       <div class="actions"><button data-reservation-change="${r.id}">Modificar o solicitar actuación</button><button class="ghost" data-reservation-upload="${r.id}">Elegir foto o documento</button></div>
       <p class="muted" data-upload-status="${r.id}"></p>
       <div class="reservation-action-form hidden" data-reservation-form="${r.id}">
@@ -1891,6 +1891,15 @@ function bindAgencyReservationActions() {
     } catch (error) { alert(error.message); submit.disabled = false; }
   }));
   document.querySelectorAll('[data-reservation-upload]').forEach(button => button.addEventListener('click', () => uploadAgencyReservationDocument(button.dataset.reservationUpload)));
+  document.querySelectorAll('[data-delete-reservation-document]').forEach(button => button.addEventListener('click', async () => {
+    if (!confirm(`¿Borrar definitivamente ${button.dataset.documentName || 'este documento'}?`)) return;
+    try {
+      button.disabled = true;
+      await api(`/api/agency/reservations/${button.dataset.reservationId}/documents/${button.dataset.deleteReservationDocument}`, { method: 'DELETE' });
+      alert('Documento borrado.');
+      agencyView('agencyDashboard');
+    } catch (error) { alert('No se pudo borrar: ' + error.message); button.disabled = false; }
+  }));
 }
 
 async function uploadAgencyReservationDocument(reservationId) {

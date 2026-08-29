@@ -520,7 +520,7 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260829-agency-documents-ipad-v3' });
+      return json(res, 200, { build: '20260829-agency-documents-ipad-v4' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {
@@ -2031,6 +2031,19 @@ async function agencyApi(req, res, url) {
     return binary(res, document.title, loaded.mimeType, loaded.buffer);
   }
 
+  if (req.method === 'DELETE' && url.pathname.match(/^\/api\/agency\/reservations\/[^/]+\/documents\/[^/]+$/)) {
+    const parts = url.pathname.split('/');
+    const reservationId = parts[4], documentId = parts[6];
+    const reservation = (await supa('reservations', { query: { id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const document = (await supa('documents', { query: { id: `eq.${documentId}`, reservation_id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}`, uploaded_by_type: 'eq.agency', limit: '1' } }))[0];
+    if (!document) return json(res, 404, { error: 'Documento no encontrado' });
+    await deleteAccountingFile(document.storage_path);
+    await supa('documents', { method: 'DELETE', query: { id: `eq.${document.id}`, reservation_id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}` } });
+    await audit(session, 'reservation_document_deleted', 'documents', document.id, { reservationId, filename: document.title });
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/agency/incidents') {
     const input = await bodyJson(req);
     const code = `INC-${Date.now().toString(36).toUpperCase()}`;
@@ -2765,6 +2778,15 @@ async function downloadAccountingFile(storagePath) {
   });
   if (!res.ok) throw new Error(await res.text() || `No se pudo abrir archivo ${res.status}`);
   return { mimeType: res.headers.get('content-type') || 'application/octet-stream', buffer: Buffer.from(await res.arrayBuffer()) };
+}
+
+async function deleteAccountingFile(storagePath) {
+  const url = new URL(`/storage/v1/object/${ACCOUNTING_BUCKET}/${storagePath}`, SUPABASE_URL);
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: { apikey: SERVICE_KEY, authorization: `Bearer ${SERVICE_KEY}` }
+  });
+  if (!res.ok && res.status !== 404) throw new Error(await res.text() || `No se pudo borrar archivo ${res.status}`);
 }
 
 function safeFilename(name) {

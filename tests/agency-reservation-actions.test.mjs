@@ -37,3 +37,10 @@ test('el panel del iPad detecta y carga automáticamente una versión nueva', ()
   assert.match(app, /checkForUpdate/);
   assert.match(app, /cache: 'no-store'/);
 });
+
+test('la agencia puede borrar únicamente sus propios documentos', () => {
+  assert.match(app, /data-delete-reservation-document/);
+  assert.match(server, /reservation_document_deleted/);
+  assert.match(server, /uploaded_by_type: 'eq\.agency'/);
+  assert.match(server, /deleteAccountingFile\(document\.storage_path\)/);
+});
