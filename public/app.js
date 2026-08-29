@@ -1,6 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
+const APP_BUILD = '20260829-agency-actions-ipad-v2';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -16,6 +17,20 @@ const api = async (url, options = {}) => {
 const html = (strings, ...values) => strings.map((s, i) => s + (values[i] ?? '')).join('');
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const money = v => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(v || 0));
+
+async function checkForUpdate() {
+  try {
+    const res = await fetch(`/api/version?t=${Date.now()}`, { cache: 'no-store' });
+    const current = await res.json();
+    if (current.build && current.build !== APP_BUILD) {
+      const next = new URL(location.href);
+      next.searchParams.set('actualizacion', current.build);
+      location.replace(next.href);
+    }
+  } catch {}
+}
+setInterval(checkForUpdate, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdate(); });
 
 async function init() {
   state.session = (await api('/api/session')).session;
@@ -1903,6 +1918,7 @@ logoutBtn.addEventListener('click', async () => {
 });
 
 window.addEventListener('popstate', init);
+checkForUpdate();
 init().catch(err => {
   app.innerHTML = `<div class="panel"><h1>Error</h1><p class="danger">${esc(err.message)}</p></div>`;
 });

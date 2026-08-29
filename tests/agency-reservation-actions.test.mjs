@@ -28,3 +28,9 @@ test('administración puede aprobar o rechazar sin perder trazabilidad', () => {
   assert.match(server, /reservation_status_history/);
   assert.match(app, /Aprobar y aplicar este cambio a la reserva/);
 });
+
+test('el panel del iPad detecta y carga automáticamente una versión nueva', () => {
+  assert.match(server, /\/api\/version/);
+  assert.match(app, /checkForUpdate/);
+  assert.match(app, /cache: 'no-store'/);
+});

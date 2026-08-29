@@ -519,6 +519,10 @@ async function api(req, res, url) {
       return json(res, 200, { ok: true });
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/version') {
+      return json(res, 200, { build: '20260829-agency-actions-ipad-v2' });
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/session') {
       const session = unsign(cookie(req, 'pv_session'));
       return json(res, 200, { session: session ? publicSession(session) : null });
