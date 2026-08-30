@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260830-editable-travellers-documents-v9';
+const APP_BUILD = '20260830-manage-reservation-travellers-v10';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -1770,16 +1770,22 @@ function bindRemoveTravellerButtons() {
 function agencyTravellerGroups(reservations, travellers, documents) {
   if (!reservations.length) return '';
   return `<div class="traveller-groups">${reservations.map(reservation => {
-    const group = travellers.filter(traveller => traveller.reservation_id === reservation.id);
-    return `<section class="panel"><div class="reservation-heading"><div><h3>${esc(reservation.lead_traveller_name || 'Titular pendiente')}</h3><p>${esc(reservation.reservation_code)} · ${esc(reservation.departures?.trip_name || reservation.departures?.origin_name || '')}</p></div>${badge(`${group.length}/${reservation.requested_places} fichas`)}</div>${group.length ? group.map((traveller, index) => agencyTravellerCard(traveller, index, documents.filter(document => document.traveller_id === traveller.id))).join('') : '<p class="muted">Todavía no hay fichas de viajeros. El titular de la reserva aparece arriba.</p>'}</section>`;
+    const group = travellers.filter(traveller => traveller.reservation_id === reservation.id).sort((a, b) => Number(isPrimaryTraveller(b, reservation)) - Number(isPrimaryTraveller(a, reservation)));
+    return `<section class="panel"><div class="reservation-heading"><div><h3>${esc(reservation.lead_traveller_name || 'Titular pendiente')}</h3><p>${esc(reservation.reservation_code)} · ${esc(reservation.departures?.trip_name || reservation.departures?.origin_name || '')}</p></div>${badge(`${group.length}/${reservation.requested_places} fichas`)}</div>${group.length ? group.map((traveller, index) => agencyTravellerCard(traveller, index, documents.filter(document => document.traveller_id === traveller.id), isPrimaryTraveller(traveller, reservation))).join('') : '<p class="muted">Todavía no hay fichas de viajeros. El titular de la reserva aparece arriba.</p>'}</section>`;
   }).join('')}</div>`;
 }
 
-function agencyTravellerCard(traveller, index, documents) {
+function isPrimaryTraveller(traveller, reservation) {
+  const travellerName = fullName(traveller).trim().toLocaleLowerCase('es');
+  const leadName = String(reservation.lead_traveller_name || '').trim().toLocaleLowerCase('es');
+  return Boolean(leadName && travellerName === leadName);
+}
+
+function agencyTravellerCard(traveller, index, documents, isPrimary) {
   return `<article class="traveller-card">
-    <div class="reservation-heading"><div><strong>${index === 0 ? 'Principal' : `Acompañante ${index + 1}`}: ${esc(fullName(traveller))}</strong><p>${esc(traveller.document_number || 'DNI pendiente')} · ${esc(traveller.phone || 'Sin teléfono')}</p></div><button type="button" class="ghost" data-upload-agency-traveller-doc="${traveller.id}">Hacer foto o subir DNI</button></div>
+    <div class="reservation-heading"><div><strong>${isPrimary ? 'Principal' : `Acompañante ${index + 1}`}: ${esc(fullName(traveller))}</strong><p>${esc(traveller.document_number || 'DNI pendiente')} · ${esc(traveller.phone || 'Sin teléfono')}</p></div><div class="actions">${isPrimary ? badge('Titular de la reserva') : `<button type="button" class="ghost" data-make-primary-traveller="${traveller.id}">Poner como principal</button>`}<button type="button" class="ghost" data-upload-agency-traveller-doc="${traveller.id}">Hacer foto o subir DNI</button><button type="button" class="ghost danger" data-delete-agency-traveller="${traveller.id}" data-name="${esc(fullName(traveller))}">Borrar viajero</button></div></div>
     <div class="document-list">${documents.length ? documents.map(document => `<span class="document-item"><a target="_blank" href="/api/agency/travellers/${traveller.id}/documents/${document.id}">${esc(document.title || 'DNI')}</a><button type="button" class="ghost danger" data-delete-agency-traveller-doc="${document.id}" data-traveller-id="${traveller.id}">Borrar</button></span>`).join('') : '<span class="muted">Sin DNI o documentación adjunta.</span>'}</div>
-    <details><summary>Editar datos del viajero</summary><form class="form-grid compact" data-edit-agency-traveller="${traveller.id}">
+    <details><summary>Editar o sustituir viajero</summary><div class="notice compact">Para cambiar una persona por otra sin alterar la reserva, sustituye sus datos y guarda los cambios.</div><form class="form-grid compact" data-edit-agency-traveller="${traveller.id}">
       <label>Nombre<input name="firstName" value="${esc(traveller.first_name || '')}" required></label><label>Primer apellido<input name="lastName1" value="${esc(traveller.last_name_1 || '')}" required></label>
       <label>Segundo apellido<input name="lastName2" value="${esc(traveller.last_name_2 || '')}"></label><label>Teléfono<input name="phone" type="tel" value="${esc(traveller.phone || '')}"></label>
       <label>Email<input name="email" type="email" value="${esc(traveller.email || '')}"></label><label>DNI/pasaporte<input name="documentNumber" value="${esc(traveller.document_number || '')}"></label>
@@ -1797,6 +1803,16 @@ function bindAgencyTravellerActions() {
     alert('Datos del viajero actualizados.'); state.dashboard = null; agencyView('agencyTravellers');
   });
   document.querySelectorAll('[data-upload-agency-traveller-doc]').forEach(button => button.onclick = () => uploadAgencyTravellerDocument(button.dataset.uploadAgencyTravellerDoc));
+  document.querySelectorAll('[data-make-primary-traveller]').forEach(button => button.onclick = async () => {
+    if (!confirm('¿Convertir este viajero en el principal de la reserva?')) return;
+    await api(`/api/agency/travellers/${button.dataset.makePrimaryTraveller}/make-primary`, { method: 'POST' });
+    state.dashboard = null; agencyView('agencyTravellers');
+  });
+  document.querySelectorAll('[data-delete-agency-traveller]').forEach(button => button.onclick = async () => {
+    if (!confirm(`¿Borrar a ${button.dataset.name}? Se eliminarán también sus documentos. Esta acción no cambia los pagos ni las plazas reservadas.`)) return;
+    await api(`/api/agency/travellers/${button.dataset.deleteAgencyTraveller}`, { method: 'DELETE' });
+    state.dashboard = null; agencyView('agencyTravellers');
+  });
   document.querySelectorAll('[data-delete-agency-traveller-doc]').forEach(button => button.onclick = async () => {
     if (!confirm('¿Borrar este documento del viajero?')) return;
     await api(`/api/agency/travellers/${button.dataset.travellerId}/documents/${button.dataset.deleteAgencyTravellerDoc}`, { method: 'DELETE' });

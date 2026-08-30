@@ -533,7 +533,7 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260830-editable-travellers-documents-v9' });
+      return json(res, 200, { build: '20260830-manage-reservation-travellers-v10' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {
@@ -2121,6 +2121,39 @@ async function agencyApi(req, res, url) {
     } }))[0];
     await audit(session, 'traveller_updated_by_agency', 'travellers', travellerId, { reservationId: traveller.reservation_id });
     return json(res, 200, { traveller: updated });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/agency\/travellers\/[^/]+\/make-primary$/)) {
+    const travellerId = url.pathname.split('/')[4];
+    const traveller = (await supa('travellers', { query: { id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!traveller) return json(res, 404, { error: 'Viajero no encontrado' });
+    const reservation = (await supa('reservations', { query: { id: `eq.${traveller.reservation_id}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!reservation) return json(res, 404, { error: 'Reserva no encontrada' });
+    const leadName = [traveller.first_name, traveller.last_name_1, traveller.last_name_2].filter(Boolean).join(' ').trim();
+    await supa('reservations', { method: 'PATCH', query: { id: `eq.${reservation.id}`, agency_id: `eq.${session.agencyId}` }, body: { lead_traveller_name: leadName, lead_traveller_phone: traveller.phone || null, lead_traveller_email: traveller.email || null } });
+    await audit(session, 'traveller_made_primary_by_agency', 'travellers', travellerId, { reservationId: reservation.id });
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'DELETE' && url.pathname.match(/^\/api\/agency\/travellers\/[^/]+$/)) {
+    const travellerId = url.pathname.split('/')[4];
+    const traveller = (await supa('travellers', { query: { id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!traveller) return json(res, 404, { error: 'Viajero no encontrado' });
+    const reservation = (await supa('reservations', { query: { id: `eq.${traveller.reservation_id}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    const travellerName = [traveller.first_name, traveller.last_name_1, traveller.last_name_2].filter(Boolean).join(' ').trim().toLocaleLowerCase('es');
+    const wasPrimary = travellerName === String(reservation?.lead_traveller_name || '').trim().toLocaleLowerCase('es');
+    const remaining = await supa('travellers', { query: { reservation_id: `eq.${traveller.reservation_id}`, agency_id: `eq.${session.agencyId}`, id: `neq.${travellerId}`, order: 'created_at.asc', limit: '1' } });
+    if (wasPrimary && remaining[0] && reservation) {
+      const replacement = remaining[0];
+      const replacementName = [replacement.first_name, replacement.last_name_1, replacement.last_name_2].filter(Boolean).join(' ').trim();
+      await supa('reservations', { method: 'PATCH', query: { id: `eq.${reservation.id}`, agency_id: `eq.${session.agencyId}` }, body: { lead_traveller_name: replacementName, lead_traveller_phone: replacement.phone || null, lead_traveller_email: replacement.email || null } });
+    }
+    const documents = await supa('documents', { query: { traveller_id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}` } });
+    for (const document of documents) if (document.storage_path) await deleteAccountingFile(document.storage_path);
+    await supa('documents', { method: 'DELETE', query: { traveller_id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}` } });
+    await supa('travellers', { method: 'DELETE', query: { id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}` } });
+    await audit(session, 'traveller_deleted_by_agency', 'travellers', travellerId, { reservationId: traveller.reservation_id, wasPrimary, reassignedTo: wasPrimary ? remaining[0]?.id || null : null });
+    return json(res, 200, { ok: true, primaryReassigned: Boolean(wasPrimary && remaining[0]) });
   }
 
   if (req.method === 'POST' && url.pathname.match(/^\/api\/agency\/travellers\/[^/]+\/documents$/)) {

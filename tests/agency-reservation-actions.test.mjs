@@ -87,3 +87,12 @@ test('la agencia edita viajeros y fotografía su DNI desde iPad', () => {
   assert.match(app, /input\.capture = 'environment'/);
   assert.match(app, /data-edit-agency-traveller/);
 });
+
+test('la agencia sustituye, borra y cambia el viajero principal con trazabilidad', () => {
+  assert.match(server, /traveller_made_primary_by_agency/);
+  assert.match(server, /traveller_deleted_by_agency/);
+  assert.match(server, /primaryReassigned/);
+  assert.match(app, /Poner como principal/);
+  assert.match(app, /Editar o sustituir viajero/);
+  assert.match(app, /Borrar viajero/);
+});
