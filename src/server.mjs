@@ -533,7 +533,7 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260830-manage-reservation-travellers-v10' });
+      return json(res, 200, { build: '20260830-traveller-dni-picker-v11' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {

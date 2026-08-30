@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260830-manage-reservation-travellers-v10';
+const APP_BUILD = '20260830-traveller-dni-picker-v11';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -1783,7 +1783,7 @@ function isPrimaryTraveller(traveller, reservation) {
 
 function agencyTravellerCard(traveller, index, documents, isPrimary) {
   return `<article class="traveller-card">
-    <div class="reservation-heading"><div><strong>${isPrimary ? 'Principal' : `Acompañante ${index + 1}`}: ${esc(fullName(traveller))}</strong><p>${esc(traveller.document_number || 'DNI pendiente')} · ${esc(traveller.phone || 'Sin teléfono')}</p></div><div class="actions">${isPrimary ? badge('Titular de la reserva') : `<button type="button" class="ghost" data-make-primary-traveller="${traveller.id}">Poner como principal</button>`}<button type="button" class="ghost" data-upload-agency-traveller-doc="${traveller.id}">Hacer foto o subir DNI</button><button type="button" class="ghost danger" data-delete-agency-traveller="${traveller.id}" data-name="${esc(fullName(traveller))}">Borrar viajero</button></div></div>
+    <div class="reservation-heading"><div><strong>${isPrimary ? 'Principal' : `Acompañante ${index + 1}`}: ${esc(fullName(traveller))}</strong><p>${esc(traveller.document_number || 'DNI pendiente')} · ${esc(traveller.phone || 'Sin teléfono')}</p></div><div class="actions">${isPrimary ? badge('Titular de la reserva') : `<button type="button" class="ghost" data-make-primary-traveller="${traveller.id}">Poner como principal</button>`}<button type="button" class="ghost" data-photo-agency-traveller-doc="${traveller.id}">Hacer foto del DNI</button><button type="button" class="ghost" data-upload-agency-traveller-doc="${traveller.id}">Subir DNI desde Archivos/Fotos</button><button type="button" class="ghost danger" data-delete-agency-traveller="${traveller.id}" data-name="${esc(fullName(traveller))}">Borrar viajero</button></div></div>
     <div class="document-list">${documents.length ? documents.map(document => `<span class="document-item"><a target="_blank" href="/api/agency/travellers/${traveller.id}/documents/${document.id}">${esc(document.title || 'DNI')}</a><button type="button" class="ghost danger" data-delete-agency-traveller-doc="${document.id}" data-traveller-id="${traveller.id}">Borrar</button></span>`).join('') : '<span class="muted">Sin DNI o documentación adjunta.</span>'}</div>
     <details><summary>Editar o sustituir viajero</summary><div class="notice compact">Para cambiar una persona por otra sin alterar la reserva, sustituye sus datos y guarda los cambios.</div><form class="form-grid compact" data-edit-agency-traveller="${traveller.id}">
       <label>Nombre<input name="firstName" value="${esc(traveller.first_name || '')}" required></label><label>Primer apellido<input name="lastName1" value="${esc(traveller.last_name_1 || '')}" required></label>
@@ -1802,7 +1802,8 @@ function bindAgencyTravellerActions() {
     await api(`/api/agency/travellers/${form.dataset.editAgencyTraveller}`, { method: 'PATCH', body: Object.fromEntries(new FormData(form)) });
     alert('Datos del viajero actualizados.'); state.dashboard = null; agencyView('agencyTravellers');
   });
-  document.querySelectorAll('[data-upload-agency-traveller-doc]').forEach(button => button.onclick = () => uploadAgencyTravellerDocument(button.dataset.uploadAgencyTravellerDoc));
+  document.querySelectorAll('[data-photo-agency-traveller-doc]').forEach(button => button.onclick = () => uploadAgencyTravellerDocument(button.dataset.photoAgencyTravellerDoc, true));
+  document.querySelectorAll('[data-upload-agency-traveller-doc]').forEach(button => button.onclick = () => uploadAgencyTravellerDocument(button.dataset.uploadAgencyTravellerDoc, false));
   document.querySelectorAll('[data-make-primary-traveller]').forEach(button => button.onclick = async () => {
     if (!confirm('¿Convertir este viajero en el principal de la reserva?')) return;
     await api(`/api/agency/travellers/${button.dataset.makePrimaryTraveller}/make-primary`, { method: 'POST' });
@@ -1820,8 +1821,9 @@ function bindAgencyTravellerActions() {
   });
 }
 
-async function uploadAgencyTravellerDocument(travellerId) {
-  const input = document.createElement('input'); input.type = 'file'; input.accept = 'application/pdf,image/*,.heic,.heif'; input.capture = 'environment';
+async function uploadAgencyTravellerDocument(travellerId, useCamera = false) {
+  const input = document.createElement('input'); input.type = 'file'; input.accept = 'application/pdf,image/*,.heic,.heif';
+  if (useCamera) { input.accept = 'image/*'; input.capture = 'environment'; }
   input.onchange = async () => {
     const file = input.files?.[0]; if (!file) return;
     if (file.size > 25 * 1024 * 1024) return alert('El archivo supera el máximo de 25 MB.');
