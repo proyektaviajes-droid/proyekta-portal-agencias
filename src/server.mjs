@@ -533,7 +533,7 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260830-grouped-travellers-v8' });
+      return json(res, 200, { build: '20260830-editable-travellers-documents-v9' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {
@@ -2106,6 +2106,62 @@ async function agencyApi(req, res, url) {
     await deleteAccountingFile(document.storage_path);
     await supa('documents', { method: 'DELETE', query: { id: `eq.${document.id}`, reservation_id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}` } });
     await audit(session, 'reservation_document_deleted', 'documents', document.id, { reservationId, filename: document.title });
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === 'PATCH' && url.pathname.match(/^\/api\/agency\/travellers\/[^/]+$/)) {
+    const travellerId = url.pathname.split('/')[4];
+    const input = await bodyJson(req);
+    const traveller = (await supa('travellers', { query: { id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!traveller) return json(res, 404, { error: 'Viajero no encontrado' });
+    const updated = (await supa('travellers', { method: 'PATCH', query: { id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}` }, body: {
+      first_name: required(input.firstName, 'Nombre'), last_name_1: required(input.lastName1, 'Primer apellido'), last_name_2: input.lastName2 || null,
+      phone: input.phone || null, email: input.email || null, document_number: input.documentNumber || null, pickup_point: input.pickupPoint || null,
+      emergency_contact_phone: input.emergencyContactPhone || null, food_allergies: input.foodAllergies || null, mobility_needs: input.mobilityNeeds || null
+    } }))[0];
+    await audit(session, 'traveller_updated_by_agency', 'travellers', travellerId, { reservationId: traveller.reservation_id });
+    return json(res, 200, { traveller: updated });
+  }
+
+  if (req.method === 'POST' && url.pathname.match(/^\/api\/agency\/travellers\/[^/]+\/documents$/)) {
+    const travellerId = url.pathname.split('/')[4];
+    const traveller = (await supa('travellers', { query: { id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!traveller) return json(res, 404, { error: 'Viajero no encontrado' });
+    const encodedFilename = req.headers['x-proyekta-filename'];
+    if (!encodedFilename) return json(res, 400, { error: 'Falta el nombre del documento' });
+    const filename = safeFilename(decodeURIComponent(String(encodedFilename)) || `dni-${travellerId}.jpg`);
+    const declaredMime = String(req.headers['content-type'] || 'application/octet-stream').split(';')[0];
+    const lowerName = filename.toLowerCase();
+    const inferredMime = lowerName.endsWith('.heic') ? 'image/heic' : lowerName.endsWith('.heif') ? 'image/heif' : declaredMime;
+    const mimeType = declaredMime === 'application/octet-stream' ? inferredMime : declaredMime;
+    if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mimeType)) return json(res, 400, { error: 'Formato no permitido' });
+    const buffer = await bodyBuffer(req);
+    const storagePath = `agency-travellers/${session.agencyId}/${travellerId}/${Date.now()}-${filename}`;
+    await uploadAccountingFile(storagePath, mimeType, buffer);
+    const document = (await supa('documents', { method: 'POST', body: [{ agency_id: session.agencyId, reservation_id: traveller.reservation_id || null, traveller_id: travellerId, document_type: 'viajero_documento', title: filename, storage_path: storagePath, visibility: 'agency', uploaded_by_type: 'agency', uploaded_by_id: session.userId || null }] }))[0];
+    await audit(session, 'traveller_document_uploaded_by_agency', 'documents', document.id, { travellerId, filename });
+    return json(res, 201, { document });
+  }
+
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/agency\/travellers\/[^/]+\/documents\/[^/]+$/)) {
+    const parts = url.pathname.split('/'), travellerId = parts[4], documentId = parts[6];
+    const traveller = (await supa('travellers', { query: { id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!traveller) return json(res, 404, { error: 'Viajero no encontrado' });
+    const document = (await supa('documents', { query: { id: `eq.${documentId}`, traveller_id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!document) return json(res, 404, { error: 'Documento no encontrado' });
+    const loaded = await downloadAccountingFile(document.storage_path);
+    return binary(res, document.title, loaded.mimeType, loaded.buffer);
+  }
+
+  if (req.method === 'DELETE' && url.pathname.match(/^\/api\/agency\/travellers\/[^/]+\/documents\/[^/]+$/)) {
+    const parts = url.pathname.split('/'), travellerId = parts[4], documentId = parts[6];
+    const traveller = (await supa('travellers', { query: { id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}`, limit: '1' } }))[0];
+    if (!traveller) return json(res, 404, { error: 'Viajero no encontrado' });
+    const document = (await supa('documents', { query: { id: `eq.${documentId}`, traveller_id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}`, uploaded_by_type: 'eq.agency', limit: '1' } }))[0];
+    if (!document) return json(res, 404, { error: 'Documento no encontrado' });
+    await deleteAccountingFile(document.storage_path);
+    await supa('documents', { method: 'DELETE', query: { id: `eq.${documentId}`, traveller_id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}` } });
+    await audit(session, 'traveller_document_deleted_by_agency', 'documents', documentId, { travellerId });
     return json(res, 200, { ok: true });
   }
 

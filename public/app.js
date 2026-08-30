@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260830-grouped-travellers-v8';
+const APP_BUILD = '20260830-editable-travellers-documents-v9';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -953,10 +953,11 @@ async function agencyView(view) {
       <h2>Viajeros por reserva</h2>
       <div class="notice">Selecciona una reserva y añade juntos al viajero principal y a sus acompañantes. Todos quedarán vinculados a la misma reserva.</div>
       ${travellerForm(data.reservations)}
-      ${agencyTravellerGroups(data.reservations, data.travellers || [])}
+      ${agencyTravellerGroups(data.reservations, data.travellers || [], data.documents || [])}
     `;
     document.querySelector('#createTraveller')?.addEventListener('submit', createTraveller);
     bindTravellerEntries();
+    bindAgencyTravellerActions();
   }
   if (view === 'agencyPayments') {
     target.innerHTML = html`<h2>Pagos de reservas</h2><div class="notice">Selecciona el cliente y la reserva. Puedes preparar el importe restante y obtener los datos bancarios de PROYEKTA antes de comunicar la transferencia.</div>${paymentForm(data.reservations)}${table(['Reserva','Importe','Estado','Referencia'], data.payments.map(p => [p.reservation_id, money(p.amount), badge(p.status), p.external_reference || '']))}`;
@@ -1766,12 +1767,54 @@ function bindRemoveTravellerButtons() {
   document.querySelectorAll('[data-remove-traveller]').forEach(button => { button.onclick = () => button.closest('[data-traveller-entry]')?.remove(); });
 }
 
-function agencyTravellerGroups(reservations, travellers) {
+function agencyTravellerGroups(reservations, travellers, documents) {
   if (!reservations.length) return '';
   return `<div class="traveller-groups">${reservations.map(reservation => {
     const group = travellers.filter(traveller => traveller.reservation_id === reservation.id);
-    return `<section class="panel"><div class="reservation-heading"><div><h3>${esc(reservation.lead_traveller_name || 'Titular pendiente')}</h3><p>${esc(reservation.reservation_code)} · ${esc(reservation.departures?.trip_name || reservation.departures?.origin_name || '')}</p></div>${badge(`${group.length}/${reservation.requested_places} fichas`)}</div>${group.length ? table(['Relación','Nombre','Teléfono','Email','Recogida'], group.map((traveller, index) => [index === 0 ? 'Principal' : `Acompañante ${index + 1}`, fullName(traveller), traveller.phone || '', traveller.email || '', traveller.pickup_point || ''])) : '<p class="muted">Todavía no hay fichas de viajeros. El titular de la reserva aparece arriba.</p>'}</section>`;
+    return `<section class="panel"><div class="reservation-heading"><div><h3>${esc(reservation.lead_traveller_name || 'Titular pendiente')}</h3><p>${esc(reservation.reservation_code)} · ${esc(reservation.departures?.trip_name || reservation.departures?.origin_name || '')}</p></div>${badge(`${group.length}/${reservation.requested_places} fichas`)}</div>${group.length ? group.map((traveller, index) => agencyTravellerCard(traveller, index, documents.filter(document => document.traveller_id === traveller.id))).join('') : '<p class="muted">Todavía no hay fichas de viajeros. El titular de la reserva aparece arriba.</p>'}</section>`;
   }).join('')}</div>`;
+}
+
+function agencyTravellerCard(traveller, index, documents) {
+  return `<article class="traveller-card">
+    <div class="reservation-heading"><div><strong>${index === 0 ? 'Principal' : `Acompañante ${index + 1}`}: ${esc(fullName(traveller))}</strong><p>${esc(traveller.document_number || 'DNI pendiente')} · ${esc(traveller.phone || 'Sin teléfono')}</p></div><button type="button" class="ghost" data-upload-agency-traveller-doc="${traveller.id}">Hacer foto o subir DNI</button></div>
+    <div class="document-list">${documents.length ? documents.map(document => `<span class="document-item"><a target="_blank" href="/api/agency/travellers/${traveller.id}/documents/${document.id}">${esc(document.title || 'DNI')}</a><button type="button" class="ghost danger" data-delete-agency-traveller-doc="${document.id}" data-traveller-id="${traveller.id}">Borrar</button></span>`).join('') : '<span class="muted">Sin DNI o documentación adjunta.</span>'}</div>
+    <details><summary>Editar datos del viajero</summary><form class="form-grid compact" data-edit-agency-traveller="${traveller.id}">
+      <label>Nombre<input name="firstName" value="${esc(traveller.first_name || '')}" required></label><label>Primer apellido<input name="lastName1" value="${esc(traveller.last_name_1 || '')}" required></label>
+      <label>Segundo apellido<input name="lastName2" value="${esc(traveller.last_name_2 || '')}"></label><label>Teléfono<input name="phone" type="tel" value="${esc(traveller.phone || '')}"></label>
+      <label>Email<input name="email" type="email" value="${esc(traveller.email || '')}"></label><label>DNI/pasaporte<input name="documentNumber" value="${esc(traveller.document_number || '')}"></label>
+      <label>Punto de recogida<input name="pickupPoint" value="${esc(traveller.pickup_point || '')}"></label><label>Teléfono emergencia<input name="emergencyContactPhone" type="tel" value="${esc(traveller.emergency_contact_phone || '')}"></label>
+      <label>Alergias<textarea name="foodAllergies">${esc(traveller.food_allergies || '')}</textarea></label><label>Movilidad<textarea name="mobilityNeeds">${esc(traveller.mobility_needs || '')}</textarea></label>
+      <button class="full">Guardar cambios</button>
+    </form></details>
+  </article>`;
+}
+
+function bindAgencyTravellerActions() {
+  document.querySelectorAll('[data-edit-agency-traveller]').forEach(form => form.onsubmit = async event => {
+    event.preventDefault();
+    await api(`/api/agency/travellers/${form.dataset.editAgencyTraveller}`, { method: 'PATCH', body: Object.fromEntries(new FormData(form)) });
+    alert('Datos del viajero actualizados.'); state.dashboard = null; agencyView('agencyTravellers');
+  });
+  document.querySelectorAll('[data-upload-agency-traveller-doc]').forEach(button => button.onclick = () => uploadAgencyTravellerDocument(button.dataset.uploadAgencyTravellerDoc));
+  document.querySelectorAll('[data-delete-agency-traveller-doc]').forEach(button => button.onclick = async () => {
+    if (!confirm('¿Borrar este documento del viajero?')) return;
+    await api(`/api/agency/travellers/${button.dataset.travellerId}/documents/${button.dataset.deleteAgencyTravellerDoc}`, { method: 'DELETE' });
+    state.dashboard = null; agencyView('agencyTravellers');
+  });
+}
+
+async function uploadAgencyTravellerDocument(travellerId) {
+  const input = document.createElement('input'); input.type = 'file'; input.accept = 'application/pdf,image/*,.heic,.heif'; input.capture = 'environment';
+  input.onchange = async () => {
+    const file = input.files?.[0]; if (!file) return;
+    if (file.size > 25 * 1024 * 1024) return alert('El archivo supera el máximo de 25 MB.');
+    const prepared = await optimiseImageForUpload(file);
+    const response = await fetch(`/api/agency/travellers/${travellerId}/documents`, { method: 'POST', headers: { 'content-type': prepared.mimeType || 'application/octet-stream', 'x-proyekta-filename': encodeURIComponent(prepared.name) }, body: prepared.file });
+    const saved = await response.json().catch(() => ({})); if (!response.ok) throw new Error(saved.error || 'No se pudo subir el DNI');
+    alert('DNI o documento guardado en la ficha del viajero.'); state.dashboard = null; agencyView('agencyTravellers');
+  };
+  input.click();
 }
 
 function paymentForm(reservations) {

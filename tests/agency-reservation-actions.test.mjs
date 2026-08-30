@@ -78,3 +78,12 @@ test('la agencia agrupa varios viajeros en una reserva', () => {
   assert.match(app, /Guardar grupo de viajeros/);
   assert.match(app, /agencyTravellerGroups/);
 });
+
+test('la agencia edita viajeros y fotografía su DNI desde iPad', () => {
+  assert.match(server, /traveller_updated_by_agency/);
+  assert.match(server, /traveller_document_uploaded_by_agency/);
+  assert.match(server, /uploaded_by_type: 'eq\.agency'/);
+  assert.match(app, /Hacer foto o subir DNI/);
+  assert.match(app, /input\.capture = 'environment'/);
+  assert.match(app, /data-edit-agency-traveller/);
+});
