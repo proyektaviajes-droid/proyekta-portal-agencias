@@ -71,3 +71,10 @@ test('administración puede adjuntar documentos visibles para la agencia', () =>
   assert.match(app, /uploadAdminReservationDocument/);
   assert.match(app, /Enviado por PROYEKTA/);
 });
+
+test('la agencia agrupa varios viajeros en una reserva', () => {
+  assert.match(server, /travellers_created_as_group/);
+  assert.match(server, /requested_places.*existing\.length/);
+  assert.match(app, /Guardar grupo de viajeros/);
+  assert.match(app, /agencyTravellerGroups/);
+});

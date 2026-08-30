@@ -134,6 +134,9 @@ button:disabled { opacity: .65; cursor: wait; }
 .reservation-summary { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 .document-list { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .document-list a { color: var(--brand); font-weight: 700; }
+.traveller-entries, .traveller-groups { display: grid; gap: 14px; }
+.traveller-entry { border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+.traveller-entry legend { color: var(--brand); font-weight: 800; padding: 0 7px; }
 .document-item { display: inline-flex; align-items: center; gap: 6px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; }
 .document-item button { padding: 5px 8px; min-height: 34px; }
 .notice.compact { margin: 0; padding: 8px 10px; }

@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260829-admin-reservation-documents-v7';
+const APP_BUILD = '20260830-grouped-travellers-v8';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -949,8 +949,14 @@ async function agencyView(view) {
     document.querySelector('#createReservation')?.addEventListener('submit', createReservation);
   }
   if (view === 'agencyTravellers') {
-    target.innerHTML = html`<h2>Incorporar viajero</h2>${travellerForm(data.reservations)}${reservationsTable(data.reservations)}`;
+    target.innerHTML = html`
+      <h2>Viajeros por reserva</h2>
+      <div class="notice">Selecciona una reserva y añade juntos al viajero principal y a sus acompañantes. Todos quedarán vinculados a la misma reserva.</div>
+      ${travellerForm(data.reservations)}
+      ${agencyTravellerGroups(data.reservations, data.travellers || [])}
+    `;
     document.querySelector('#createTraveller')?.addEventListener('submit', createTraveller);
+    bindTravellerEntries();
   }
   if (view === 'agencyPayments') {
     target.innerHTML = html`<h2>Pagos de reservas</h2><div class="notice">Selecciona el cliente y la reserva. Puedes preparar el importe restante y obtener los datos bancarios de PROYEKTA antes de comunicar la transferencia.</div>${paymentForm(data.reservations)}${table(['Reserva','Importe','Estado','Referencia'], data.payments.map(p => [p.reservation_id, money(p.amount), badge(p.status), p.external_reference || '']))}`;
@@ -1037,8 +1043,12 @@ async function createReservation(e) {
 
 async function createTraveller(e) {
   e.preventDefault();
-  await api('/api/agency/travellers', { method: 'POST', body: Object.fromEntries(new FormData(e.currentTarget)) });
-  alert('Viajero guardado');
+  const form = e.currentTarget;
+  const travellers = [...form.querySelectorAll('[data-traveller-entry]')]
+    .map(row => Object.fromEntries([...row.querySelectorAll('[name]')].map(field => [field.name, field.value])))
+    .map(item => Object.fromEntries(Object.entries(item).map(([key, value]) => [key, String(value).trim()])));
+  const result = await api('/api/agency/travellers', { method: 'POST', body: { reservationId: form.elements.reservationId.value, travellers } });
+  alert(`${result.travellers.length} viajero(s) guardados en la misma reserva`);
   state.dashboard = null;
   agencyView('agencyTravellers');
 }
@@ -1723,18 +1733,45 @@ function reservationForm(departures) {
 function travellerForm(reservations) {
   return `<form id="createTraveller" class="panel form-grid">
     ${reservationSelect(reservations)}
-    ${input('firstName','Nombre')}
-    ${input('lastName1','Primer apellido')}
-    ${input('lastName2','Segundo apellido')}
-    ${input('phone','Teléfono')}
-    ${input('email','Email','email')}
-    ${input('emergencyContactName','Contacto emergencia')}
-    ${input('emergencyContactPhone','Teléfono emergencia')}
-    <label>Alergias<textarea name="foodAllergies"></textarea></label>
-    <label>Movilidad<textarea name="mobilityNeeds"></textarea></label>
-    ${input('pickupPoint','Punto de recogida')}
-    <button class="full">Guardar viajero</button>
+    <div id="travellerEntries" class="full traveller-entries">${travellerEntry(1, false)}</div>
+    <div class="actions full"><button type="button" class="ghost" id="addCompanion">Añadir 2.º o 3.º viajero</button><button>Guardar grupo de viajeros</button></div>
   </form>`;
+}
+
+function travellerEntry(number, removable = true) {
+  return `<fieldset class="traveller-entry" data-traveller-entry>
+    <legend>${number === 1 ? 'Viajero principal de la ficha' : `Acompañante ${number}`}</legend>
+    <div class="form-grid">
+      ${input('firstName','Nombre')}${input('lastName1','Primer apellido')}${input('lastName2','Segundo apellido')}
+      ${input('phone','Teléfono','tel')}${input('email','Email','email')}${input('pickupPoint','Punto de recogida')}
+      ${input('emergencyContactName','Contacto de emergencia')}${input('emergencyContactPhone','Teléfono emergencia','tel')}
+      <label>Alergias<textarea name="foodAllergies"></textarea></label><label>Movilidad<textarea name="mobilityNeeds"></textarea></label>
+    </div>
+    ${removable ? '<button type="button" class="ghost danger" data-remove-traveller>Quitar acompañante</button>' : ''}
+  </fieldset>`;
+}
+
+function bindTravellerEntries() {
+  const entries = document.querySelector('#travellerEntries');
+  document.querySelector('#addCompanion')?.addEventListener('click', () => {
+    const count = entries.querySelectorAll('[data-traveller-entry]').length;
+    if (count >= 10) return alert('Puedes añadir hasta 10 viajeros a la vez.');
+    entries.insertAdjacentHTML('beforeend', travellerEntry(count + 1, true));
+    bindRemoveTravellerButtons();
+  });
+  bindRemoveTravellerButtons();
+}
+
+function bindRemoveTravellerButtons() {
+  document.querySelectorAll('[data-remove-traveller]').forEach(button => { button.onclick = () => button.closest('[data-traveller-entry]')?.remove(); });
+}
+
+function agencyTravellerGroups(reservations, travellers) {
+  if (!reservations.length) return '';
+  return `<div class="traveller-groups">${reservations.map(reservation => {
+    const group = travellers.filter(traveller => traveller.reservation_id === reservation.id);
+    return `<section class="panel"><div class="reservation-heading"><div><h3>${esc(reservation.lead_traveller_name || 'Titular pendiente')}</h3><p>${esc(reservation.reservation_code)} · ${esc(reservation.departures?.trip_name || reservation.departures?.origin_name || '')}</p></div>${badge(`${group.length}/${reservation.requested_places} fichas`)}</div>${group.length ? table(['Relación','Nombre','Teléfono','Email','Recogida'], group.map((traveller, index) => [index === 0 ? 'Principal' : `Acompañante ${index + 1}`, fullName(traveller), traveller.phone || '', traveller.email || '', traveller.pickup_point || ''])) : '<p class="muted">Todavía no hay fichas de viajeros. El titular de la reserva aparece arriba.</p>'}</section>`;
+  }).join('')}</div>`;
 }
 
 function paymentForm(reservations) {
