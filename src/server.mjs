@@ -2,7 +2,7 @@ import { createHmac, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'no
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, relative, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
@@ -22,7 +22,7 @@ const ACCOUNTING_BUCKET = process.env.ACCOUNTING_BUCKET || 'proyekta-accounting'
 const passwordResetAttempts = new Map();
 
 if (isMain && (!SUPABASE_URL || !SERVICE_KEY || SESSION_SECRET.length < 32)) {
-  console.warn('Faltan variables: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY o SESSION_SECRET largo.');
+  throw new Error('Faltan variables: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY o SESSION_SECRET largo.');
 }
 
 export async function hashPassword(password) {
@@ -156,7 +156,12 @@ function csv(res, filename, rows) {
 
 async function bodyJson(req) {
   let body = '';
-  for await (const chunk of req) body += chunk;
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += Buffer.byteLength(chunk);
+    if (bytes > 20 * 1024 * 1024) throw Object.assign(new Error('Petición demasiado grande'), { statusCode: 413 });
+    body += chunk;
+  }
   if (!body) return {};
   return JSON.parse(body);
 }
@@ -283,8 +288,10 @@ function unsign(cookieValue) {
   if (!cookieValue || !cookieValue.includes('.')) return null;
   const [data, sig] = cookieValue.split('.');
   const expected = createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
-  const payload = JSON.parse(Buffer.from(data, 'base64url').toString('utf8'));
+  if (Buffer.byteLength(sig) !== Buffer.byteLength(expected) || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  let payload;
+  try { payload = JSON.parse(Buffer.from(data, 'base64url').toString('utf8')); } catch { return null; }
+  if (!payload || typeof payload !== 'object') return null;
   if (!payload.exp || payload.exp < Date.now()) return null;
   return payload;
 }
@@ -406,8 +413,24 @@ async function audit(session, action, entityType, entityId, metadata = {}) {
   }).catch(() => {});
 }
 
-function requireSession(req, res, type) {
+async function activeSession(req) {
   const session = unsign(cookie(req, 'pv_session'));
+  if (!session || !['admin', 'agency'].includes(session.type) || !session.userId) return null;
+  const table = session.type === 'admin' ? 'admin_users' : 'agency_users';
+  const query = { id: `eq.${session.userId}`, is_active: 'eq.true', limit: '1' };
+  if (session.type === 'agency') query.agency_id = `eq.${session.agencyId}`;
+  const users = await supa(table, { query });
+  const user = users[0];
+  if (!user || session.authVersion !== sha256(user.password_hash || '')) return null;
+  if (session.type === 'agency') {
+    const agencies = await supa('agencies', { query: { id: `eq.${session.agencyId}`, access_status: 'eq.activa', deleted_at: 'is.null', limit: '1' } });
+    if (!agencies.length) return null;
+  }
+  return session;
+}
+
+async function requireSession(req, res, type) {
+  const session = await activeSession(req);
   if (!session || (type && session.type !== type)) {
     json(res, 401, { error: 'Acceso no autorizado' });
     return null;
@@ -422,7 +445,7 @@ async function api(req, res, url) {
       const users = await supa('admin_users', { query: { email: `eq.${email}`, is_active: 'eq.true', limit: '1' } });
       const user = users[0];
       if (!user || !(await verifyPassword(password, user.password_hash))) return json(res, 401, { error: 'Credenciales incorrectas' });
-      setSession(res, { type: 'admin', userId: user.id, name: user.name, email: user.email, role: user.role });
+      setSession(res, { type: 'admin', userId: user.id, name: user.name, email: user.email, role: user.role, authVersion: sha256(user.password_hash || '') });
       await audit({ type: 'admin', userId: user.id }, 'admin_login', 'admin_users', user.id);
       return json(res, 200, { ok: true, session: { type: 'admin', name: user.name, email: user.email } });
     }
@@ -440,7 +463,7 @@ async function api(req, res, url) {
         if (await verifyPassword(password, candidate.password_hash)) { user = candidate; break; }
       }
       if (!user) return json(res, 401, { error: 'Credenciales incorrectas' });
-      setSession(res, { type: 'agency', userId: user.id, agencyId: agency.id, agencyCode: agency.agency_code, name: user.name, email: user.email });
+      setSession(res, { type: 'agency', userId: user.id, agencyId: agency.id, agencyCode: agency.agency_code, name: user.name, email: user.email, authVersion: sha256(user.password_hash || '') });
       await audit({ type: 'agency', userId: user.id, agencyId: agency.id }, 'agency_login', 'agency_users', user.id);
       return json(res, 200, { ok: true, session: { type: 'agency', agency: agency.commercial_name, agencyCode: agency.agency_code } });
     }
@@ -533,11 +556,11 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260830-traveller-dni-picker-v11' });
+      return json(res, 200, { build: '20260830-traveller-dni-picker-v11-security-20260908-v1' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {
-      const session = unsign(cookie(req, 'pv_session'));
+      const session = await activeSession(req);
       return json(res, 200, { session: session ? publicSession(session) : null });
     }
 
@@ -567,7 +590,7 @@ async function api(req, res, url) {
     return json(res, 404, { error: 'Ruta no encontrada' });
   } catch (error) {
     console.error(error);
-    return json(res, 500, { error: 'Error interno', detail: process.env.NODE_ENV === 'production' ? undefined : error.message });
+    return json(res, error.statusCode || 500, { error: error.statusCode === 413 ? 'Petición demasiado grande' : 'Error interno', detail: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 }
 
@@ -720,7 +743,7 @@ async function contractsApi(req, res, url) {
       return json(res, 201, {
         ok: true,
         contractId: generated.id,
-        downloadUrl: `/generated/contracts/${generated.filename}`,
+        downloadUrl: signedContractUrl(generated.filename),
         agencyMatched: Boolean(matchedAgency),
         emailSent,
         message: emailSent
@@ -752,7 +775,7 @@ async function registerReceivedAgencyContract(input, generated) {
   if (!agency) return null;
 
   const now = new Date().toISOString();
-  const documentUrl = `/generated/contracts/${generated.filename}`;
+  const documentUrl = signedContractUrl(generated.filename);
   await supa('agencies', {
     method: 'PATCH',
     query: { id: `eq.${agency.id}` },
@@ -781,7 +804,7 @@ async function registerReceivedAgencyContract(input, generated) {
 }
 
 async function adminApi(req, res, url) {
-  const session = requireSession(req, res, 'admin');
+  const session = await requireSession(req, res, 'admin');
   if (!session) return;
 
   if (req.method === 'GET' && url.pathname === '/api/admin/cuentas/snapshot') {
@@ -1297,6 +1320,7 @@ async function adminApi(req, res, url) {
     if (reservation.status === 'cancelada') return json(res, 400, { error: 'No se puede registrar un pago en una reserva anulada' });
     const amount = roundMoney(input.amount);
     if (!Number.isFinite(amount) || amount <= 0) return json(res, 400, { error: 'Importe de pago no valido' });
+    if (amount > roundMoney(Number(reservation.total_amount || 0) - Number(reservation.paid_amount || 0))) return json(res, 400, { error: 'El pago supera el saldo pendiente de la reserva' });
     const payment = (await supa('payments', { method: 'POST', body: [{
       reservation_id: id,
       agency_id: reservation.agency_id,
@@ -1941,7 +1965,7 @@ async function adminApi(req, res, url) {
 }
 
 async function agencyApi(req, res, url) {
-  const session = requireSession(req, res, 'agency');
+  const session = await requireSession(req, res, 'agency');
   if (!session) return;
 
   if (req.method === 'GET' && url.pathname === '/api/agency/dashboard') {
@@ -2218,29 +2242,60 @@ async function agencyApi(req, res, url) {
 }
 
 async function serveStatic(req, res, url) {
-  let pathname = decodeURIComponent(url.pathname);
+  let pathname;
+  try { pathname = decodeURIComponent(url.pathname); } catch { return json(res, 400, { error: 'Ruta no válida' }); }
+  if (pathname.includes('\\') || pathname.includes('\0') || pathname.split('/').some(part => part === '..' || part === '.')) return json(res, 403, { error: 'Prohibido' });
   if (pathname === '/') pathname = '/index.html';
   if (pathname === '/cuentas' || pathname === '/cuentas/') pathname = '/cuentas/index.html';
-  const baseDir = pathname.startsWith('/generated/') ? root : publicDir;
-  const target = normalize(join(baseDir, pathname));
-  if (!target.startsWith(baseDir)) return json(res, 403, { error: 'Prohibido' });
+  const generated = pathname.startsWith('/generated/');
+  // Only an administrator or a short-lived link for this exact document may read it.
+  if (generated) {
+    const grant = unsign(url.searchParams.get('token'));
+    const authorizedLink = grant?.purpose === 'contract-download' && grant.path === pathname;
+    if (!authorizedLink && !await requireSession(req, res, 'admin')) return;
+  }
+  const baseDir = generated ? join(root, 'generated') : publicDir;
+  const target = resolve(baseDir, generated ? pathname.slice('/generated/'.length) : pathname.slice(1));
+  const localPath = relative(baseDir, target);
+  if (localPath.startsWith('..') || isAbsolute(localPath) || /(?:^|[/\\])\.|backup|_ROTO/i.test(localPath)) return json(res, 403, { error: 'Prohibido' });
   try {
     const file = await readFile(target);
     res.writeHead(200, {
       'content-type': mime(extname(target)),
-      'cache-control': 'no-store, no-cache, must-revalidate, max-age=0',
-      'pragma': 'no-cache',
-      'expires': '0',
+      'cache-control': 'no-store, max-age=0',
+      'x-robots-tag': 'noindex, nofollow, noarchive, nosnippet',
       'x-content-type-options': 'nosniff',
       'x-frame-options': 'DENY',
       'referrer-policy': 'same-origin'
     });
     res.end(file);
   } catch {
+    const appRoutes = new Set(['/acceso', '/crear-contrasena', '/recuperar-contrasena', '/admin']);
+    if (!appRoutes.has(pathname)) {
+      res.writeHead(404, {
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'no-store, max-age=0',
+        'x-robots-tag': 'noindex, nofollow, noarchive, nosnippet',
+        'x-content-type-options': 'nosniff'
+      });
+      return res.end('Ruta no encontrada');
+    }
     const file = await readFile(join(publicDir, 'index.html'));
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store, no-cache, must-revalidate, max-age=0' });
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store, max-age=0',
+      'x-robots-tag': 'noindex, nofollow, noarchive, nosnippet',
+      'x-content-type-options': 'nosniff',
+      'x-frame-options': 'DENY',
+      'referrer-policy': 'same-origin'
+    });
     res.end(file);
   }
+}
+
+function signedContractUrl(filename) {
+  const path = `/generated/contracts/${filename}`;
+  return `${path}?token=${encodeURIComponent(sign({ purpose: 'contract-download', path, exp: Date.now() + 15 * 60 * 1000 }))}`;
 }
 
 function validateContractInput(input) {
@@ -2619,7 +2674,7 @@ async function adjustInventoryForReservationChange(before, after) {
 }
 
 function publicSession(session) {
-  const { exp, ...safe } = session;
+  const { exp, authVersion, ...safe } = session;
   return safe;
 }
 
@@ -3128,10 +3183,16 @@ function flattenObject(obj, prefix = '') {
   return out;
 }
 
-const server = createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  if (url.pathname.startsWith('/api/')) return api(req, res, url);
-  return serveStatic(req, res, url);
+const server = createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname.startsWith('/api/')) return await api(req, res, url);
+    return await serveStatic(req, res, url);
+  } catch (error) {
+    console.error('Error procesando petición:', error);
+    if (!res.headersSent) return json(res, 500, { error: 'Error interno' });
+    res.destroy();
+  }
 });
 
 if (isMain) {

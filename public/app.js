@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260830-traveller-dni-picker-v11';
+const APP_BUILD = '20260830-traveller-dni-picker-v11-security-20260908-v1';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -429,7 +429,7 @@ async function adminView(view) {
       return [r.reservations?.reservation_code || '', r.agencies?.commercial_name || '', r.request_type, badge(r.status), esc(detail), actions];
     }))}
     <h2>Incidencias</h2>${table(['Código','Agencia','Categoría','Prioridad','Estado','Descripción'], incidents.map(i => [
-      i.incident_code, i.agencies?.commercial_name, i.category, i.priority, badge(i.status), i.description
+      esc(i.incident_code), esc(i.agencies?.commercial_name), esc(i.category), esc(i.priority), badge(i.status), esc(i.description)
     ]))}`;
     document.querySelectorAll('[data-change-review]').forEach(button => button.addEventListener('click', async () => {
       const approve = button.dataset.changeReview === 'approve';
@@ -656,7 +656,7 @@ function reservationDetail(data) {
       <div class="card"><div class="toolbar"><h3>Documentación de la reserva</h3><button type="button" data-admin-upload-reservation="${r.id}">Añadir documento</button></div><p class="muted" data-admin-upload-status></p>${documents.length ? table(['Fecha','Documento','Tipo','Enviado por','Acciones'], documents.map(d => [formatDateTime(d.created_at), d.title || '', d.document_type || '', d.uploaded_by_type === 'agency' ? 'Agencia' : 'Administración', `<a class="button-link" target="_blank" href="/api/admin/reservations/${r.id}/documents/${d.id}">Abrir documento</a>`])) : '<p class="muted">Todavía no hay documentación asociada a esta reserva.</p>'}</div>
       <div class="grid two">
         <div class="card"><h3>Historial</h3>${history.length ? table(['Fecha','Antes','Despues','Motivo'], history.map(h => [formatDateTime(h.created_at), h.old_status || '', h.new_status || '', h.reason || ''])) : '<p class="muted">Sin historial todavia.</p>'}</div>
-        <div class="card"><h3>Incidencias</h3>${incidents.length ? table(['Fecha','Categoria','Prioridad','Estado','Descripcion'], incidents.map(i => [formatDateTime(i.created_at), i.category || '', i.priority || '', badge(i.status), i.description || ''])) : '<p class="muted">Sin incidencias.</p>'}</div>
+        <div class="card"><h3>Incidencias</h3>${incidents.length ? table(['Fecha','Categoria','Prioridad','Estado','Descripcion'], incidents.map(i => [formatDateTime(i.created_at), esc(i.category), esc(i.priority), badge(i.status), esc(i.description)])) : '<p class="muted">Sin incidencias.</p>'}</div>
       </div>
     </section>`;
 }
@@ -965,7 +965,7 @@ async function agencyView(view) {
     bindAgencyPaymentForm();
   }
   if (view === 'agencyIncidents') {
-    target.innerHTML = html`<h2>Nueva incidencia</h2>${incidentForm(data.reservations)}${table(['Código','Categoría','Prioridad','Estado','Descripción'], data.incidents.map(i => [i.incident_code, i.category, i.priority, badge(i.status), i.description]))}`;
+    target.innerHTML = html`<h2>Nueva incidencia</h2>${incidentForm(data.reservations)}${table(['Código','Categoría','Prioridad','Estado','Descripción'], data.incidents.map(i => [esc(i.incident_code), esc(i.category), esc(i.priority), badge(i.status), esc(i.description)]))}`;
     document.querySelector('#createIncident')?.addEventListener('submit', createIncident);
   }
 }
