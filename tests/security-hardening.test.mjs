@@ -17,6 +17,9 @@ const mock=createServer(async(req,res)=>{
  if(url.pathname.endsWith('/admin_users')||url.pathname.endsWith('/agency_users'))data=enabled?[{id:'u1',password_hash:storedHash,name:'Test',email:'test@example.invalid',agency_id:'a1'}]:[];
  if(url.pathname.endsWith('/agencies'))data=agencyEnabled?[{id:'a1',agency_code:'AG-TEST',commercial_name:'Synthetic agency'}]:[];
  if(url.pathname.endsWith('/reservations'))data=[{id:'r1',agency_id:'a1',status:'confirmada',total_amount:1000,paid_amount:900}];
+ if(url.pathname.endsWith('/departures'))data=[{id:'d1',trip_name:'Test trip',origin_name:'Madrid',starts_at:'2027-04-11',ends_at:'2027-04-16',status:'disponible'}];
+ if(url.pathname.endsWith('/departure_inventory'))data=[{departure_id:'d1',total_places:600,blocked_places:2,confirmed_places:500}];
+ if(url.pathname.endsWith('/reservations')&&url.searchParams.has('departure_id'))data=url.searchParams.get('offset')==='0'?Array.from({length:500},(_,i)=>({departure_id:'d1',id:'private-'+i,requested_places:1,single_rooms:1,status:'confirmada',lead_traveller_name:'PRIVATE NAME',agency_id:'OTHER AGENCY'})):[{departure_id:'d1',requested_places:2,double_rooms:1,status:'solicitud_recibida'},{requested_places:9,status:'cancelada'},{requested_places:9,status:'bloqueo_provisional',block_expires_at:'2020-01-01'}];
  if(url.pathname.endsWith('/payments')&&req.method==='POST'){inserts++;data=[{id:'p1'}];}
  res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(data));
 });
@@ -39,6 +42,7 @@ try {
  let ready=false;for(let i=0;i<100;i++){try{await status('/',200);ready=true;break;}catch{if(child.exitCode!==null)throw Error(stderr);await new Promise(r=>setTimeout(r,50));}}
  assert(ready,'server started');
  await status('/api/admin/cuentas/snapshot',401);
+ await status('/api/agency/group-overview',401);
  await status('/generated/..%2fcanary.txt',403);
  await status('/generated/..%5ccanary.txt',403);
  await status('/app.backup.js',403);
@@ -48,6 +52,11 @@ try {
  for(const route of ['/admin','/acceso','/crear-contrasena','/recuperar-contrasena'])await status(route,200);
  const admin=await login('admin'),agency=await login('agency');
  await status('/api/agency/dashboard',200,{headers:{cookie:agency}});
+ const groupResponse=await get('/api/agency/group-overview',{headers:{cookie:agency}});assert.equal(groupResponse.status,200);
+ const groupText=await groupResponse.text();const group=JSON.parse(groupText).groups[0];
+ assert.equal(group.people,502);assert.equal(group.solo,500);assert.equal(group.accompanied,2);assert.equal(group.pending,2);assert.equal(group.available,98);assert.equal(group.rooms.double,1);
+ for(const secret of ['PRIVATE NAME','OTHER AGENCY','private-','agency_id','lead_traveller'])assert(!groupText.includes(secret),'aggregate must exclude private fields');
+
  await status('/api/admin/cuentas/snapshot',401,{headers:{cookie:agency}});
  await status('/generated/contracts/test.html',200,{headers:{cookie:admin}});
  enabled=false;await status('/api/agency/dashboard',401,{headers:{cookie:agency}});enabled=true;

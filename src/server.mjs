@@ -556,7 +556,7 @@ async function api(req, res, url) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/version') {
-      return json(res, 200, { build: '20260830-traveller-dni-picker-v11-security-20260908-v1' });
+      return json(res, 200, { build: '20260830-traveller-dni-picker-v11-groups-20261007-v1' });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/session') {
@@ -1968,6 +1968,25 @@ async function agencyApi(req, res, url) {
   const session = await requireSession(req, res, 'agency');
   if (!session) return;
 
+  if (req.method === 'GET' && url.pathname === '/api/agency/group-overview') {
+    const departures = await supa('departures', { query: { visible_to_agencies: 'eq.true', status: 'in.(disponible,pocas_plazas,confirmada,completa,lista_espera)', order: 'starts_at.asc' } });
+    const groups = [];
+    if (departures.length) {
+      const filter = `in.(${departures.map(d => d.id).join(',')})`;
+      const rows = [];
+      for (let offset = 0; ; offset += 500) {
+        const page = await supa('reservations', { query: { departure_id: filter, deleted_at: 'is.null', select: 'id,departure_id,requested_places,single_rooms,double_rooms,triple_rooms,status,block_expires_at', order: 'id.asc', limit: '500', offset: String(offset) } });
+        rows.push(...page);
+        if (page.length < 500) break;
+      }
+      const inventories = await supa('departure_inventory', { query: { departure_id: filter, select: 'departure_id,total_places,blocked_places,confirmed_places' } });
+      for (const departure of departures) {
+        groups.push({ id: departure.id, name: departure.trip_name, origin: departure.origin_name, startsAt: departure.starts_at, endsAt: departure.ends_at, status: departure.status, ...summarizeAgencyGroup(rows.filter(row => row.departure_id === departure.id), inventories.find(row => row.departure_id === departure.id)) });
+      }
+    }
+    return json(res, 200, { updatedAt: new Date().toISOString(), groups });
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/agency/dashboard') {
     const [departures, reservations, payments, incidents, changeRequests, documents, travellers] = await Promise.all([
       supa('departures', { query: { visible_to_agencies: 'eq.true', status: 'in.(disponible,pocas_plazas,confirmada)', order: 'starts_at.asc' } }),
@@ -3205,3 +3224,23 @@ if (isMain) {
 
 
 
+
+// Public-to-agencies aggregate only: never return reservation or traveller records.
+export function summarizeAgencyGroup(reservations, inventory, now = Date.now()) {
+  const number = value => Math.max(0, Math.floor(Number(value) || 0));
+  const confirmedStates = new Set(['confirmada','reserva_confirmada','senal_pagada','pago_parcial','pago_completo','finalizada']);
+  const activeStates = new Set(['solicitud_recibida','pendiente','bloqueo_provisional', ...confirmedStates]);
+  const result = { people: 0, confirmed: 0, pending: 0, solo: 0, accompanied: 0, unclassified: 0, rooms: { single: 0, double: 0, triple: 0 }, roomDataInconsistent: false, capacity: null, available: null };
+  for (const row of reservations) {
+    if (row.deleted_at || !activeStates.has(row.status)) continue;
+    if (row.status === 'bloqueo_provisional' && row.block_expires_at && Date.parse(row.block_expires_at) <= now) continue;
+    const people = number(row.requested_places), single = number(row.single_rooms), double = number(row.double_rooms), triple = number(row.triple_rooms);
+    result.people += people;
+    result[confirmedStates.has(row.status) ? 'confirmed' : 'pending'] += people;
+    result.rooms.single += single; result.rooms.double += double; result.rooms.triple += triple;
+    if (single + double * 2 + triple * 3 === people) { result.solo += single; result.accompanied += double * 2 + triple * 3; }
+    else { result.unclassified += people; result.roomDataInconsistent = true; }
+  }
+  if (inventory) { result.capacity = number(inventory.total_places); result.available = Math.max(0, result.capacity - number(inventory.blocked_places) - number(inventory.confirmed_places)); }
+  return result;
+}
