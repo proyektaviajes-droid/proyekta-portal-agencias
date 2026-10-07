@@ -150,3 +150,12 @@ button:disabled { opacity: .65; cursor: wait; }
   .reservation-card > .actions { display: grid; grid-template-columns: 1fr; }
   .reservation-card > .actions button { width: 100%; min-height: 48px; }
 }
+
+.group-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr)); gap:16px; margin:16px 0 28px; }
+.group-card { padding:20px; border:1px solid var(--line,#dbe3e8); border-radius:12px; background:white; }
+.group-card h4 { margin:0; font-size:1.15rem; }
+.group-numbers { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:20px 0; }
+.group-numbers strong { display:block; font-size:1.9rem; color:#123c59; }
+.group-numbers span { font-size:.88rem; }
+.group-rooms { display:flex; flex-wrap:wrap; gap:12px; padding:12px; background:#eef4f6; border-radius:8px; }
+.group-card progress { width:100%; height:12px; accent-color:#167665; }

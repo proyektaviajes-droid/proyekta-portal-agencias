@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
 let state = { session: null, dashboard: null };
-const APP_BUILD = '20260830-traveller-dni-picker-v11-security-20260908-v1';
+const APP_BUILD = '20260830-traveller-dni-picker-v11-groups-20261007-v1';
 
 const api = async (url, options = {}) => {
   const res = await fetch(url, {
@@ -923,6 +923,7 @@ async function loadAgencyDashboard(force = false) {
 }
 
 async function agencyView(view) {
+  stopGroupOverview();
   const target = document.querySelector('#view');
   const data = await loadAgencyDashboard();
   if (view === 'agencyDashboard') {
@@ -933,12 +934,14 @@ async function agencyView(view) {
         ${metric('Reservas', data.reservations.length)}
         ${metric('Pagos pendientes', data.payments.filter(p => p.status !== 'verificado').length)}
       </div>
+      <section id="agencyGroupOverview" aria-label="Composición de los grupos"></section>
       <h3>Próximas salidas</h3>
       ${departuresTable(data.departures)}
       <h3>Mis reservas</h3>
       ${agencyReservations(data)}
     `;
     bindAgencyReservationActions();
+    startGroupOverview();
   }
   if (view === 'agencyNewReservation') {
     target.innerHTML = html`
@@ -2094,3 +2097,37 @@ checkForUpdate();
 init().catch(err => {
   app.innerHTML = `<div class="panel"><h1>Error</h1><p class="danger">${esc(err.message)}</p></div>`;
 });
+
+let groupOverviewTimer = null;
+let groupOverviewGeneration = 0;
+function stopGroupOverview() { clearInterval(groupOverviewTimer); groupOverviewTimer = null; groupOverviewGeneration++; }
+function startGroupOverview() {
+  const generation = groupOverviewGeneration;
+  const host = document.querySelector('#agencyGroupOverview');
+  host.innerHTML = '<h3>El grupo de cada salida</h3><p>Datos de todas las agencias, sin información personal.</p><button type="button" data-refresh-groups>Actualizar grupos</button><p data-group-state role="status">Cargando grupos…</p><div class="group-cards" data-group-cards></div>';
+  let running = false;
+  const refresh = async () => {
+    if (running || document.hidden || !host.isConnected || state.session?.type !== 'agency' || generation !== groupOverviewGeneration) return;
+    running = true;
+    const button = host.querySelector('[data-refresh-groups]'); button.disabled = true;
+    try {
+      const data = await api('/api/agency/group-overview');
+      if (!host.isConnected || generation !== groupOverviewGeneration) return;
+      host.querySelector('[data-group-cards]').innerHTML = data.groups.map(group => {
+        const occupancy = group.capacity ? Math.min(100, Math.round((group.capacity - group.available) / group.capacity * 100)) : 0;
+        return `<article class="group-card"><h4>${esc(group.name)}</h4><p>${esc(group.origin)} · ${esc(group.startsAt)} → ${esc(group.endsAt)}</p>
+          <div class="group-numbers"><div><strong>${group.people}</strong><span>Personas apuntadas</span></div><div><strong>${group.solo}</strong><span>Viajan solos · individual</span></div><div><strong>${group.accompanied}</strong><span>Viajan acompañados</span></div></div>
+          <p>${group.confirmed} confirmadas · ${group.pending} pendientes de confirmación</p>
+          <div class="group-rooms"><span>Individuales: <b>${group.rooms.single}</b></span><span>Dobles: <b>${group.rooms.double}</b></span><span>Triples: <b>${group.rooms.triple}</b></span></div>
+          ${group.unclassified ? `<p class="notice">${group.unclassified} personas pendientes de cuadrar habitaciones; no se clasifican como solas o acompañadas.</p>` : ''}
+          <p><b>${group.available === null ? 'Disponibilidad por confirmar' : `${group.available} plazas disponibles de ${group.capacity}`}</b></p>
+          ${group.capacity ? `<progress max="100" value="${occupancy}" aria-label="Porcentaje de plazas ocupadas o bloqueadas">${occupancy}%</progress>` : ''}
+          <p class="muted">Habitaciones solicitadas. Las solicitudes pendientes no garantizan plaza.</p></article>`;
+      }).join('') || '<p>No hay salidas publicadas.</p>';
+      host.querySelector('[data-group-state]').textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-ES') + '. Actualización automática cada 30 segundos.';
+    } catch { if (host.isConnected) host.querySelector('[data-group-state]').textContent = 'No se pudieron actualizar los grupos. Las cifras anteriores pueden estar desactualizadas. Pulsa Actualizar grupos para reintentar.'; }
+    finally { running = false; if (host.isConnected) button.disabled = false; }
+  };
+  host.querySelector('[data-refresh-groups]').onclick = refresh;
+  refresh(); groupOverviewTimer = setInterval(refresh, 30000);
+}
