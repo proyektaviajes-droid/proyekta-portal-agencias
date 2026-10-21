@@ -106,8 +106,8 @@ function renderPublicAgencyRequest() {
         <h2>Solicitud recibida</h2>
         <p class="muted">Ahora puedes descargar la documentacion. Si te interesa colaborar, firma el contrato y envianoslo para revision.</p>
         <div class="actions">
-          <a class="button-link" href="/dossiers/PROYEKTA_Dossier_Colaboracion_Agencias_2027_REVISADO.pdf" download>Descargar dossier</a>
-          <a class="button-link" href="/contracts/Contrato_colaboracion_agencias_Proyekta_Viajes_CORREGIDO.pdf" target="_blank">Descargar contrato</a>
+          <a class="button-link" href="/dossiers/PROYEKTA_Dossier_Colaboracion_Agencias_2027_REVISADO.pdf" download="Dossier.pdf">Descargar dossier</a>
+          <a class="button-link" href="/contracts/Contrato_colaboracion_agencias_Proyekta_Viajes_CORREGIDO.pdf" download="Contrato.pdf">Descargar contrato</a>
           <a class="ghost button-light" href="mailto:jon@proyektaviajes.com?subject=Contrato agencia colaboradora PROYEKTA">Enviar contrato por email</a>
         </div>
         <p class="muted">Cuando PROYEKTA reciba y valide el contrato, te enviaremos el codigo de agencia y el enlace para crear contrasena.</p>
