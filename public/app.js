@@ -1,5 +1,6 @@
 const app = document.querySelector('#app');
 const logoutBtn = document.querySelector('#logoutBtn');
+const enablePushBtn = document.querySelector('#enablePushBtn');
 let state = { session: null, dashboard: null };
 const APP_BUILD = '20260830-traveller-dni-picker-v11-groups-20261007-v1';
 
@@ -35,6 +36,8 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) chec
 async function init() {
   state.session = (await api('/api/session')).session;
   logoutBtn.classList.toggle('hidden', !state.session);
+  enablePushBtn.classList.toggle('hidden', state.session?.type !== 'admin');
+  enablePushBtn.onclick = enableAdminPush;
   const path = location.pathname.replace(/\/+$/, '') || '/';
 
   if (path === '/crear-contrasena') return renderSetPassword();
@@ -208,6 +211,34 @@ function wireNav(root, renderer) {
 function renderAdmin() {
   useTemplate('#adminTpl');
   wireNav(app, adminView);
+}
+
+function decodeVapidKey(value) {
+  const padding = '='.repeat((4 - value.length % 4) % 4);
+  const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, char => char.charCodeAt(0));
+}
+
+async function enableAdminPush() {
+  enablePushBtn.disabled = true;
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      throw new Error('Este navegador no admite avisos web. En iPhone y iPad, añade el portal a la pantalla de inicio y ábrelo desde ese icono.');
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') throw new Error('No se ha concedido permiso para mostrar avisos en este dispositivo.');
+    const { publicKey } = await api('/api/admin/push/config');
+    const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodeVapidKey(publicKey) });
+    await api('/api/admin/push/subscriptions', { method: 'POST', body: { subscription: subscription.toJSON() } });
+    enablePushBtn.textContent = 'Avisos activados';
+    alert('Avisos activados en este dispositivo. Repite una sola vez en cada dispositivo donde quieras recibirlos.');
+  } catch (error) {
+    alert(error.message || 'No se pudieron activar los avisos.');
+  } finally {
+    enablePushBtn.disabled = false;
+  }
 }
 
 async function adminView(view) {

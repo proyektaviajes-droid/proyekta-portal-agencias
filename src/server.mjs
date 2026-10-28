@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
+import { createECDH, createHmac, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -6,6 +6,7 @@ import { extname, join, normalize, relative, isAbsolute, resolve } from 'node:pa
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
+import webPush from 'web-push';
 
 const scrypt = promisify(scryptCb);
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -20,6 +21,18 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const ACCOUNTING_BUCKET = process.env.ACCOUNTING_BUCKET || 'proyekta-accounting';
 const passwordResetAttempts = new Map();
+const P256_ORDER = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+
+function deriveVapidKeys() {
+  const digest = createHmac('sha256', SESSION_SECRET).update('proyekta:web-push:vapid:p256:v1').digest();
+  const scalar = BigInt(`0x${digest.toString('hex')}`) % (P256_ORDER - 1n) + 1n;
+  const privateKey = Buffer.from(scalar.toString(16).padStart(64, '0'), 'hex');
+  const ecdh = createECDH('prime256v1');
+  ecdh.setPrivateKey(privateKey);
+  return { publicKey: ecdh.getPublicKey('base64url', 'uncompressed'), privateKey: privateKey.toString('base64url') };
+}
+
+const VAPID_KEYS = deriveVapidKeys();
 
 if (isMain && (!SUPABASE_URL || !SERVICE_KEY || SESSION_SECRET.length < 32)) {
   throw new Error('Faltan variables: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY o SESSION_SECRET largo.');
@@ -316,7 +329,7 @@ function clearSession(res) {
   res.setHeader('set-cookie', `pv_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
 }
 
-async function supa(path, { method = 'GET', body, query } = {}) {
+async function supa(path, { method = 'GET', body, query, prefer = 'return=representation' } = {}) {
   const url = new URL(`/rest/v1/${path}`, SUPABASE_URL);
   if (query) Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url, {
@@ -325,7 +338,7 @@ async function supa(path, { method = 'GET', body, query } = {}) {
       apikey: SERVICE_KEY,
       authorization: `Bearer ${SERVICE_KEY}`,
       'content-type': 'application/json',
-      prefer: 'return=representation'
+      prefer
     },
     body: body ? JSON.stringify(body) : undefined
   });
@@ -688,6 +701,7 @@ async function createPublicAgencyRequest(req, res) {
       status: notificationStatus
     }]
   }, null);
+  await sendAdminPush('Nueva solicitud de agencia', `Solicitud recibida · ${leadCode}`, `agency-request-${leadCode}`);
 
   return json(res, 201, { ok: true, lead, request, emailSent });
 }
@@ -731,6 +745,7 @@ async function contractsApi(req, res, url) {
           status: process.env.RESEND_API_KEY ? 'pendiente_envio' : 'pendiente'
         }]
       }).catch(() => {});
+      await sendAdminPush('Contrato de agencia recibido', 'Hay un contrato pendiente de revisión en Administración.', `contract-${generated.id}`);
 
       let emailSent = false;
       if (process.env.RESEND_API_KEY) {
@@ -806,6 +821,31 @@ async function registerReceivedAgencyContract(input, generated) {
 async function adminApi(req, res, url) {
   const session = await requireSession(req, res, 'admin');
   if (!session) return;
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/push/config') {
+    return json(res, 200, { publicKey: VAPID_KEYS.publicKey });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/admin/push/subscriptions') {
+    const input = await bodyJson(req);
+    const subscription = input.subscription || {};
+    const endpoint = String(subscription.endpoint || '');
+    const p256dh = String(subscription.keys?.p256dh || '');
+    const auth = String(subscription.keys?.auth || '');
+    if (!endpoint.startsWith('https://') || endpoint.length > 2048 || !p256dh || !auth) return json(res, 400, { error: 'Suscripcion de avisos no valida.' });
+    await supa('admin_push_subscriptions', {
+      method: 'POST',
+      query: { on_conflict: 'endpoint' },
+      prefer: 'resolution=merge-duplicates,return=representation',
+      body: [{ admin_user_id: session.userId, endpoint, p256dh, auth, user_agent: String(req.headers['user-agent'] || '').slice(0, 500), updated_at: new Date().toISOString() }]
+    });
+    return json(res, 201, { ok: true });
+  }
+  if (req.method === 'DELETE' && url.pathname === '/api/admin/push/subscriptions') {
+    const endpoint = url.searchParams.get('endpoint') || '';
+    if (!endpoint.startsWith('https://') || endpoint.length > 2048) return json(res, 400, { error: 'Suscripcion de avisos no valida.' });
+    await supa('admin_push_subscriptions', { method: 'DELETE', query: { admin_user_id: `eq.${session.userId}`, endpoint: `eq.${endpoint}` } });
+    return json(res, 200, { ok: true });
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/admin/cuentas/snapshot') {
     try {
@@ -2037,6 +2077,7 @@ async function agencyApi(req, res, url) {
     const rows = inputs.map(item => ({ ...normalizeTraveller(item), agency_id: session.agencyId, reservation_id: reservation.id }));
     const travellers = await supa('travellers', { method: 'POST', body: rows });
     await audit(session, 'travellers_created_as_group', 'travellers', travellers[0]?.id || null, { reservationId: reservation.id, count: travellers.length });
+    await sendAdminPush('Viajeros registrados', `${session.agencyCode || 'Una agencia'} · ${reservation.reservation_code}`, `travellers-${travellers[0]?.id || reservation.id}`);
     return json(res, 201, { travellers });
   }
 
@@ -2092,6 +2133,7 @@ async function agencyApi(req, res, url) {
     const description = `${labels[requestType]} ${reservation.reservation_code}. Motivo: ${reason}. Datos propuestos: titular ${proposed.leadTravellerName || reservation.lead_traveller_name}; viajeros ${proposed.requestedPlaces}; teléfono ${proposed.leadTravellerPhone || 'sin cambio'}; correo ${proposed.leadTravellerEmail || 'sin cambio'}; observaciones ${proposed.observations || 'sin cambio'}.`;
     await supa('incidents', { method: 'POST', body: [{ incident_code: `INC-${Date.now().toString(36).toUpperCase()}`, reservation_id: reservation.id, agency_id: session.agencyId, category: 'Cambio de reserva', priority: 'normal', description, status: 'abierta' }] });
     await audit(session, 'reservation_change_requested', 'change_requests', request.id, { reservationId, requestType });
+    await sendAdminPush('Solicitud de cambio de reserva', `${session.agencyCode || 'Una agencia'} · ${reservation.reservation_code}`, `change-${request.id}`);
     return json(res, 201, { request });
   }
 
@@ -2117,6 +2159,7 @@ async function agencyApi(req, res, url) {
     await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
     const document = (await supa('documents', { method: 'POST', body: [{ agency_id: session.agencyId, reservation_id: reservation.id, document_type: input.documentType || 'documentacion_reserva', title: filename, storage_path: storagePath, visibility: 'agency', uploaded_by_type: 'agency', uploaded_by_id: session.userId || null }] }))[0];
     await audit(session, 'reservation_document_uploaded', 'documents', document.id, { reservationId, filename });
+    await sendAdminPush('Documentación recibida', `${session.agencyCode || 'Una agencia'} · ${reservation.reservation_code}`, `reservation-document-${document.id}`);
     return json(res, 201, { document });
   }
 
@@ -2149,6 +2192,7 @@ async function agencyApi(req, res, url) {
     await deleteAccountingFile(document.storage_path);
     await supa('documents', { method: 'DELETE', query: { id: `eq.${document.id}`, reservation_id: `eq.${reservationId}`, agency_id: `eq.${session.agencyId}` } });
     await audit(session, 'reservation_document_deleted', 'documents', document.id, { reservationId, filename: document.title });
+    await sendAdminPush('Documento retirado por una agencia', `Reserva ${reservation.reservation_code}`, `document-removed-${document.id}`);
     return json(res, 200, { ok: true });
   }
 
@@ -2163,6 +2207,7 @@ async function agencyApi(req, res, url) {
       emergency_contact_phone: input.emergencyContactPhone || null, food_allergies: input.foodAllergies || null, mobility_needs: input.mobilityNeeds || null
     } }))[0];
     await audit(session, 'traveller_updated_by_agency', 'travellers', travellerId, { reservationId: traveller.reservation_id });
+    await sendAdminPush('Ficha de viajero actualizada', `${session.agencyCode || 'Una agencia'} ha modificado una ficha.`, `traveller-updated-${travellerId}`);
     return json(res, 200, { traveller: updated });
   }
 
@@ -2175,6 +2220,7 @@ async function agencyApi(req, res, url) {
     const leadName = [traveller.first_name, traveller.last_name_1, traveller.last_name_2].filter(Boolean).join(' ').trim();
     await supa('reservations', { method: 'PATCH', query: { id: `eq.${reservation.id}`, agency_id: `eq.${session.agencyId}` }, body: { lead_traveller_name: leadName, lead_traveller_phone: traveller.phone || null, lead_traveller_email: traveller.email || null } });
     await audit(session, 'traveller_made_primary_by_agency', 'travellers', travellerId, { reservationId: reservation.id });
+    await sendAdminPush('Viajero principal cambiado', `${session.agencyCode || 'Una agencia'} · ${reservation.reservation_code}`, `primary-traveller-${travellerId}`);
     return json(res, 200, { ok: true });
   }
 
@@ -2196,6 +2242,7 @@ async function agencyApi(req, res, url) {
     await supa('documents', { method: 'DELETE', query: { traveller_id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}` } });
     await supa('travellers', { method: 'DELETE', query: { id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}` } });
     await audit(session, 'traveller_deleted_by_agency', 'travellers', travellerId, { reservationId: traveller.reservation_id, wasPrimary, reassignedTo: wasPrimary ? remaining[0]?.id || null : null });
+    await sendAdminPush('Ficha de viajero eliminada', `${session.agencyCode || 'Una agencia'} ha eliminado una ficha.`, `traveller-removed-${travellerId}`);
     return json(res, 200, { ok: true, primaryReassigned: Boolean(wasPrimary && remaining[0]) });
   }
 
@@ -2216,6 +2263,7 @@ async function agencyApi(req, res, url) {
     await uploadAccountingFile(storagePath, mimeType, buffer);
     const document = (await supa('documents', { method: 'POST', body: [{ agency_id: session.agencyId, reservation_id: traveller.reservation_id || null, traveller_id: travellerId, document_type: 'viajero_documento', title: filename, storage_path: storagePath, visibility: 'agency', uploaded_by_type: 'agency', uploaded_by_id: session.userId || null }] }))[0];
     await audit(session, 'traveller_document_uploaded_by_agency', 'documents', document.id, { travellerId, filename });
+    await sendAdminPush('Documentación de viajero recibida', `${session.agencyCode || 'Una agencia'} ha enviado documentación.`, `traveller-document-${document.id}`);
     return json(res, 201, { document });
   }
 
@@ -2238,6 +2286,7 @@ async function agencyApi(req, res, url) {
     await deleteAccountingFile(document.storage_path);
     await supa('documents', { method: 'DELETE', query: { id: `eq.${documentId}`, traveller_id: `eq.${travellerId}`, agency_id: `eq.${session.agencyId}` } });
     await audit(session, 'traveller_document_deleted_by_agency', 'documents', documentId, { travellerId });
+    await sendAdminPush('Documento de viajero retirado', `${session.agencyCode || 'Una agencia'} ha retirado documentación.`, `traveller-document-removed-${documentId}`);
     return json(res, 200, { ok: true });
   }
 
@@ -2254,6 +2303,7 @@ async function agencyApi(req, res, url) {
       status: 'abierta'
     }] }))[0];
     await audit(session, 'incident_created', 'incidents', incident.id);
+    await sendAdminPush('Nueva incidencia', `${session.agencyCode || 'Una agencia'} · ${incident.incident_code}`, `incident-${incident.id}`);
     return json(res, 201, { incident });
   }
 
@@ -2446,6 +2496,7 @@ async function sendContractEmail(generated, input) {
 
 async function notifyReservationRequested(reservation, session) {
   if (!reservation) return false;
+  await sendAdminPush('Nueva reserva de agencia', `${session.agencyCode || 'Agencia'} · ${reservation.reservation_code}`, `reservation-${reservation.id}`);
   const subject = `Nueva solicitud de reserva - ${reservation.reservation_code}`;
   const body = [
     'Nueva solicitud de reserva recibida en el portal PROYEKTA.',
@@ -2633,6 +2684,7 @@ function cleanSyncText(value,maxLength) { return String(value||'').trim().replac
 function validSyncDate(value) { const parsed=new Date(value||0); return Number.isFinite(parsed.getTime())&&parsed.getTime()>0?parsed.toISOString():new Date().toISOString(); }
 
 async function notifyPaymentReported(payment, reservation, session) {
+  await sendAdminPush('Pago comunicado por agencia', `${session.agencyCode || 'Una agencia'} · ${reservation.reservation_code}`, `payment-${payment.id}`);
   const agency = reservation.agencies?.commercial_name || session.agencyCode || '';
   const subject = `Transferencia comunicada - ${reservation.reservation_code} - ${formatEuro(payment.amount)}`;
   const body = [
@@ -2664,6 +2716,24 @@ async function notifyPaymentReported(payment, reservation, session) {
     body: [{ agency_id: reservation.agency_id, channel: 'email', template_key: 'payment_reported', subject, body, status, sent_at: sent ? new Date().toISOString() : null }]
   });
   return sent;
+}
+
+async function sendAdminPush(title, body, tag) {
+  try {
+    webPush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:jon@proyektaviajes.es', VAPID_KEYS.publicKey, VAPID_KEYS.privateKey);
+    const subscriptions = await supa('admin_push_subscriptions', { query: { select: 'id,endpoint,p256dh,auth' } });
+    const results = await Promise.allSettled(subscriptions.map(subscription => webPush.sendNotification({
+      endpoint: subscription.endpoint,
+      keys: { p256dh: subscription.p256dh, auth: subscription.auth }
+    }, JSON.stringify({ title, body, tag, url: '/admin' }))));
+    const staleIds = results.flatMap((result, index) => result.status === 'rejected' && [404, 410].includes(result.reason?.statusCode) ? [subscriptions[index].id] : []);
+    if (staleIds.length) await supa('admin_push_subscriptions', { method: 'DELETE', query: { id: `in.(${staleIds.join(',')})` } });
+    for (const result of results) if (result.status === 'rejected' && ![404, 410].includes(result.reason?.statusCode)) console.error('No se pudo entregar un aviso push:', result.reason?.message || result.reason);
+    return results.filter(result => result.status === 'fulfilled').length;
+  } catch (error) {
+    console.error('No se pudieron enviar avisos push:', error.message || error);
+    return 0;
+  }
 }
 
 function formatEuro(value) {
