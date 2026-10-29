@@ -1,10 +1,8 @@
 services:
   - type: web
     name: proyekta-portal-agencias
-    runtime: node
-    plan: starter
-    buildCommand: npm install --omit=dev
-    startCommand: node src/server.mjs
+    runtime: docker
+    plan: free
     envVars:
       - key: NODE_ENV
         value: production
@@ -27,4 +25,18 @@ services:
       - key: CONTRACT_NOTIFY_EMAIL
         value: reservas@proyektaviajes.es
       - key: RESEND_API_KEY
+        sync: false
+      - key: PRIVATE_NETWORK_ENABLED
+        value: "false"
+      - key: TS_AUTHKEY
+        sync: false
+      - key: NAS_WEBDAV_URL
+        value: https://100.91.23.41:5006/Proyekta_Agencias/
+      - key: NAS_WEBDAV_USERNAME
+        value: Proyekta_portal
+      - key: NAS_WEBDAV_PASSWORD
+        sync: false
+      - key: NAS_WEBDAV_CA_CERT
+        sync: false
+      - key: NAS_WEBDAV_TLS_SERVERNAME
         sync: false

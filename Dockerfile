@@ -12,6 +12,7 @@ COPY src ./src
 COPY public ./public
 COPY db ./db
 COPY scripts ./scripts
+COPY nas-webdav.mjs ./nas-webdav.mjs
 COPY private-network.mjs ./private-network.mjs
 COPY README.md ./
 
