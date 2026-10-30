@@ -52,38 +52,40 @@ async function waitForSocket(path, timeoutMs = 15000) {
 
 async function start() {
   if (PRIVATE_NETWORK_ENABLED) {
-    if (!AUTH_KEY) throw new Error('TS_AUTHKEY must be configured when PRIVATE_NETWORK_ENABLED=true');
-    if (!env.NAS_WEBDAV_URL || !env.NAS_WEBDAV_USERNAME || !env.NAS_WEBDAV_PASSWORD) {
-      throw new Error('NAS WebDAV settings must be configured before enabling the private connection');
-    }
-
-    const socketPath = '/tmp/proyekta-tailscale.sock';
-    const proxyAddress = '127.0.0.1:1055';
-    const keyPath = '/tmp/proyekta-tailscale-authkey';
-    await writeFile(keyPath, AUTH_KEY, { mode: 0o600 });
     try {
-      daemon = spawn('/usr/local/bin/tailscaled', [
-        '--tun=userspace-networking',
-        '--state=mem:',
-        `--socket=${socketPath}`,
-        `--outbound-http-proxy-listen=${proxyAddress}`
-      ], { stdio: 'inherit', env });
-      daemon.once('error', error => console.error('Tailscale daemon failed:', error.message));
-      await waitForSocket(socketPath);
-      await run('/usr/local/bin/tailscale', [
-        `--socket=${socketPath}`,
-        'up',
-        `--auth-key=file:${keyPath}`,
-        '--hostname=proyekta-render',
-        '--accept-dns=false',
-        '--accept-routes=false',
-        '--ssh=false'
-      ]);
-    } finally {
-      await unlink(keyPath).catch(() => {});
+      if (!AUTH_KEY) throw new Error('TS_AUTHKEY no está configurada');
+      const socketPath = '/tmp/proyekta-tailscale.sock';
+      const proxyAddress = '127.0.0.1:1055';
+      const keyPath = '/tmp/proyekta-tailscale-authkey';
+      await writeFile(keyPath, AUTH_KEY, { mode: 0o600 });
+      try {
+        daemon = spawn('/usr/local/bin/tailscaled', [
+          '--tun=userspace-networking',
+          '--state=mem:',
+          `--socket=${socketPath}`,
+          `--outbound-http-proxy-listen=${proxyAddress}`
+        ], { stdio: 'inherit', env });
+        daemon.once('error', error => console.error('Tailscale daemon failed:', error.message));
+        await waitForSocket(socketPath);
+        await run('/usr/local/bin/tailscale', [
+          `--socket=${socketPath}`,
+          'up',
+          `--auth-key=file:${keyPath}`,
+          '--hostname=proyekta-render',
+          '--accept-dns=false',
+          '--accept-routes=false',
+          '--ssh=false'
+        ]);
+      } finally {
+        await unlink(keyPath).catch(() => {});
+      }
+      env.NAS_HTTP_PROXY = `http://${proxyAddress}`;
+      console.log('PROYEKTA_PRIVATE_NETWORK connected');
+    } catch (error) {
+      console.error('PROYEKTA_PRIVATE_NETWORK connection_not_verified:', error.message);
+      daemon?.kill('SIGTERM');
+      daemon = undefined;
     }
-    env.NAS_HTTP_PROXY = `http://${proxyAddress}`;
-    console.log('PROYEKTA_PRIVATE_NETWORK connected');
   }
 
   app = spawn(process.execPath, ['src/server.mjs'], { stdio: 'inherit', env });
@@ -98,7 +100,7 @@ async function start() {
 }
 
 start().catch(error => {
-  console.error('PROYEKTA_PRIVATE_NETWORK startup_failed:', error.message);
+  console.error('Portal startup_failed:', error.message);
   daemon?.kill('SIGTERM');
   process.exit(1);
 });
