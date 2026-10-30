@@ -41,6 +41,9 @@ Este paquete crea una aplicación real para el portal B2B de agencias. No usa da
 - No publicar la service-role key en el frontend.
 - Rotar `SESSION_SECRET`.
 - Configurar backups automáticos de Supabase.
+- El almacenamiento WebDAV del NAS es opcional. Para activarlo, configura Tailscale con una clave de autenticación reutilizable y etiquetada `tag:proyekta-render`, y carga como secretos `TS_AUTHKEY`, `NAS_WEBDAV_USERNAME`, `NAS_WEBDAV_PASSWORD` y, si el certificado del NAS no está emitido por una CA pública, `NAS_WEBDAV_CA_CERT` y `NAS_WEBDAV_TLS_SERVERNAME`. Solo entonces establece `PRIVATE_NETWORK_ENABLED=true`.
+- `NAS_WEBDAV_URL` debe apuntar por HTTPS al recurso compartido `Proyekta_Agencias`. La validación del certificado TLS permanece activa; no desactives la verificación para resolver errores de certificado.
+- Los archivos anteriores siguen en Supabase. Con NAS activo, los nuevos archivos se guardan en WebDAV y la base conserva una referencia `nas:`; los documentos de viajeros se ordenan por agencia, viaje, titular y otros viajeros. La base Supabase sigue siendo el catálogo de agencias, viajeros, reservas y contactos.
 - Configurar correo real antes de enviar invitaciones reales.
 - Configurar pasarela de pago antes de activar cobros por tarjeta.
 - Revisar textos legales, privacidad, condiciones y contratos antes de abrir a agencias.

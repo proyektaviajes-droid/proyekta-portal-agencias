@@ -6,6 +6,7 @@ import { extname, join, normalize, relative, isAbsolute, resolve } from 'node:pa
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
+import { deleteNasFile, downloadNasFile, ensureNasDirectory, uploadNasFile } from '../nas-webdav.mjs';
 import webPush from 'web-push';
 
 const scrypt = promisify(scryptCb);
@@ -917,8 +918,8 @@ async function adminApi(req, res, url) {
     const existing = (await optionalSupa('cuentas_documents', { query: { movement_legacy_id: `eq.${movementId}`, limit: '1' } }, []))[0];
     if (existing?.sha256 === sha256) return json(res, 200, { ok: true, unchanged: true, sha256 });
     const storagePath = `cuentas/documents/${movementId}/${sha256}-${filename}`;
-    await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
-    const row = { movement_legacy_id: movementId, filename, mime_type: parsed.mimeType, storage_path: storagePath, byte_size: parsed.buffer.length, sha256, updated_at: validSyncDate(input.updatedAt) };
+    const storedPath = await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
+    const row = { movement_legacy_id: movementId, filename, mime_type: parsed.mimeType, storage_path: storedPath, byte_size: parsed.buffer.length, sha256, updated_at: validSyncDate(input.updatedAt) };
     await supa('cuentas_documents', { method: 'POST', query: { on_conflict: 'movement_legacy_id' }, prefer: 'resolution=merge-duplicates,return=representation', body: [row] });
     await audit(session, 'cuentas_document_uploaded', 'cuentas_documents', movementId, { filename, sha256, byteSize: parsed.buffer.length });
     return json(res, 200, { ok: true, sha256, byteSize: parsed.buffer.length });
@@ -1337,8 +1338,8 @@ async function adminApi(req, res, url) {
     if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mimeType)) return json(res, 400, { error: 'Formato no permitido' });
     const buffer = await bodyBuffer(req);
     const storagePath = `admin-reservations/${reservation.agency_id}/${reservation.id}/${Date.now()}-${filename}`;
-    await uploadAccountingFile(storagePath, mimeType, buffer);
-    const document = (await supa('documents', { method: 'POST', body: [{ agency_id: reservation.agency_id, reservation_id: reservation.id, document_type: req.headers['x-proyekta-document-type'] || 'documentacion_reserva', title: filename, storage_path: storagePath, visibility: 'agency', uploaded_by_type: 'admin', uploaded_by_id: session.userId || null }] }))[0];
+    const storedPath = await uploadAccountingFile(storagePath, mimeType, buffer);
+    const document = (await supa('documents', { method: 'POST', body: [{ agency_id: reservation.agency_id, reservation_id: reservation.id, document_type: req.headers['x-proyekta-document-type'] || 'documentacion_reserva', title: filename, storage_path: storedPath, visibility: 'agency', uploaded_by_type: 'admin', uploaded_by_id: session.userId || null }] }))[0];
     await audit(session, 'reservation_document_uploaded_by_admin', 'documents', document.id, { reservationId, filename });
     return json(res, 201, { document });
   }
@@ -1399,6 +1400,13 @@ async function adminApi(req, res, url) {
       reservation_id: id,
       observations: 'Ficha creada desde el titular de la reserva por PROYEKTA.'
     }] }))[0];
+    if (process.env.PRIVATE_NETWORK_ENABLED === 'true' && process.env.NAS_WEBDAV_URL) {
+      try {
+        await ensureNasDirectory(await travelerNasDirectory(traveller));
+      } catch (error) {
+        console.error('No se pudo preparar la carpeta del titular en el NAS:', error.message);
+      }
+    }
     await audit(session, 'traveller_created_from_reservation', 'travellers', traveller.id, { reservation_id: id });
     return json(res, 201, { traveller });
   }
@@ -1492,9 +1500,9 @@ async function adminApi(req, res, url) {
     const parsed = parseUpload(input);
     const filename = safeFilename(input.filename || input.name || `documento-viajero.${extensionForMime(parsed.mimeType)}`);
     const storagePath = `travellers/${travellerId}/${Date.now()}-${filename}`;
-    await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
-    const file = (await supa('documents', { method: 'POST', body: [{ agency_id: traveller.agency_id || null, reservation_id: traveller.reservation_id || null, traveller_id: travellerId, document_type: 'viajero_documento', title: filename, storage_path: storagePath, visibility: 'admin', uploaded_by_type: 'admin', uploaded_by_id: session.userId || null }] }))[0];
-    await audit(session, 'traveller_document_uploaded', 'documents', file.id, { travellerId, storagePath });
+    const storedPath = await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
+    const file = (await supa('documents', { method: 'POST', body: [{ agency_id: traveller.agency_id || null, reservation_id: traveller.reservation_id || null, traveller_id: travellerId, document_type: 'viajero_documento', title: filename, storage_path: storedPath, visibility: 'admin', uploaded_by_type: 'admin', uploaded_by_id: session.userId || null }] }))[0];
+    await audit(session, 'traveller_document_uploaded', 'documents', file.id, { travellerId, storagePath: storedPath });
     return json(res, 201, { file });
   }
 
@@ -2061,8 +2069,20 @@ async function agencyApi(req, res, url) {
     }));
     await audit(session, 'reservation_requested', 'reservations', created.id);
     const reservation = await getReservationWithContext(created.id);
+    let nasFoldersReady = null;
+    if (process.env.PRIVATE_NETWORK_ENABLED === 'true' && process.env.NAS_WEBDAV_URL && reservation) {
+      try {
+        const { agencyFolder, tripFolder, leadFolder } = await reservationNasFolders(reservation);
+        await ensureNasDirectory(`${agencyFolder}/${tripFolder}/${leadFolder}/DNI`);
+        await ensureNasDirectory(`${agencyFolder}/${tripFolder}/${leadFolder}/Otros viajeros`);
+        nasFoldersReady = true;
+      } catch (error) {
+        nasFoldersReady = false;
+        console.error('No se pudieron preparar las carpetas de la reserva en el NAS:', error.message);
+      }
+    }
     await notifyReservationRequested(reservation, session).catch(error => console.error('No se pudo notificar reserva:', error));
-    return json(res, 201, { reservation: created });
+    return json(res, 201, { reservation: created, nasFoldersReady });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/agency/travellers') {
@@ -2076,6 +2096,15 @@ async function agencyApi(req, res, url) {
     if (inputs.length > available) return json(res, 400, { error: `Solo quedan ${available} plazas sin ficha en esta reserva` });
     const rows = inputs.map(item => ({ ...normalizeTraveller(item), agency_id: session.agencyId, reservation_id: reservation.id }));
     const travellers = await supa('travellers', { method: 'POST', body: rows });
+    if (process.env.PRIVATE_NETWORK_ENABLED === 'true' && process.env.NAS_WEBDAV_URL) {
+      for (const traveller of travellers) {
+        try {
+          await ensureNasDirectory(await travelerNasDirectory(traveller));
+        } catch (error) {
+          console.error('No se pudo preparar la carpeta de un viajero en el NAS:', error.message);
+        }
+      }
+    }
     await audit(session, 'travellers_created_as_group', 'travellers', travellers[0]?.id || null, { reservationId: reservation.id, count: travellers.length });
     await sendAdminPush('Viajeros registrados', `${session.agencyCode || 'Una agencia'} · ${reservation.reservation_code}`, `travellers-${travellers[0]?.id || reservation.id}`);
     return json(res, 201, { travellers });
@@ -2156,8 +2185,8 @@ async function agencyApi(req, res, url) {
     }
     const filename = safeFilename(input.filename || `documento-${reservation.reservation_code}`);
     const storagePath = `agency-reservations/${session.agencyId}/${reservation.id}/${Date.now()}-${filename}`;
-    await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
-    const document = (await supa('documents', { method: 'POST', body: [{ agency_id: session.agencyId, reservation_id: reservation.id, document_type: input.documentType || 'documentacion_reserva', title: filename, storage_path: storagePath, visibility: 'agency', uploaded_by_type: 'agency', uploaded_by_id: session.userId || null }] }))[0];
+    const storedPath = await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
+    const document = (await supa('documents', { method: 'POST', body: [{ agency_id: session.agencyId, reservation_id: reservation.id, document_type: input.documentType || 'documentacion_reserva', title: filename, storage_path: storedPath, visibility: 'agency', uploaded_by_type: 'agency', uploaded_by_id: session.userId || null }] }))[0];
     await audit(session, 'reservation_document_uploaded', 'documents', document.id, { reservationId, filename });
     await sendAdminPush('Documentación recibida', `${session.agencyCode || 'Una agencia'} · ${reservation.reservation_code}`, `reservation-document-${document.id}`);
     return json(res, 201, { document });
@@ -2260,8 +2289,8 @@ async function agencyApi(req, res, url) {
     if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mimeType)) return json(res, 400, { error: 'Formato no permitido' });
     const buffer = await bodyBuffer(req);
     const storagePath = `agency-travellers/${session.agencyId}/${travellerId}/${Date.now()}-${filename}`;
-    await uploadAccountingFile(storagePath, mimeType, buffer);
-    const document = (await supa('documents', { method: 'POST', body: [{ agency_id: session.agencyId, reservation_id: traveller.reservation_id || null, traveller_id: travellerId, document_type: 'viajero_documento', title: filename, storage_path: storagePath, visibility: 'agency', uploaded_by_type: 'agency', uploaded_by_id: session.userId || null }] }))[0];
+    const storedPath = await uploadAccountingFile(storagePath, mimeType, buffer);
+    const document = (await supa('documents', { method: 'POST', body: [{ agency_id: session.agencyId, reservation_id: traveller.reservation_id || null, traveller_id: travellerId, document_type: 'viajero_documento', title: filename, storage_path: storedPath, visibility: 'agency', uploaded_by_type: 'agency', uploaded_by_id: session.userId || null }] }))[0];
     await audit(session, 'traveller_document_uploaded_by_agency', 'documents', document.id, { travellerId, filename });
     await sendAdminPush('Documentación de viajero recibida', `${session.agencyCode || 'Una agencia'} ha enviado documentación.`, `traveller-document-${document.id}`);
     return json(res, 201, { document });
@@ -2999,7 +3028,7 @@ async function attachAccountingFile(documentId, input, session) {
   const parsed = parseUpload(input);
   const filename = safeFilename(input.filename || input.name || `factura-${document.document_code}.${extensionForMime(parsed.mimeType)}`);
   const storagePath = `accounting/documents/${document.id}/${Date.now()}-${filename}`;
-  await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
+  const storedPath = await uploadAccountingFile(storagePath, parsed.mimeType, parsed.buffer);
   const file = (await supa('documents', {
     method: 'POST',
     body: [{
@@ -3008,13 +3037,13 @@ async function attachAccountingFile(documentId, input, session) {
       traveller_id: null,
       document_type: 'factura_gestoria',
       title: filename,
-      storage_path: storagePath,
+      storage_path: storedPath,
       visibility: 'admin',
       uploaded_by_type: 'admin',
       uploaded_by_id: session.userId || null
     }]
   }))[0];
-  await audit(session, 'accounting_file_uploaded', 'documents', file.id, { documentId, storagePath });
+  await audit(session, 'accounting_file_uploaded', 'documents', file.id, { documentId, storagePath: storedPath });
   return file;
 }
 
@@ -3051,6 +3080,10 @@ async function ensureAccountingBucket() {
 }
 
 async function uploadAccountingFile(storagePath, mimeType, buffer) {
+  if (process.env.PRIVATE_NETWORK_ENABLED === 'true' && process.env.NAS_WEBDAV_URL) {
+    const nasPath = await buildNasDocumentPath(storagePath);
+    return uploadNasFile(nasPath, mimeType, buffer);
+  }
   await ensureAccountingBucket();
   const url = new URL(`/storage/v1/object/${ACCOUNTING_BUCKET}/${storagePath}`, SUPABASE_URL);
   const res = await fetch(url, {
@@ -3064,9 +3097,11 @@ async function uploadAccountingFile(storagePath, mimeType, buffer) {
     body: buffer
   });
   if (!res.ok) throw new Error(await res.text() || `No se pudo subir archivo ${res.status}`);
+  return storagePath;
 }
 
 async function downloadAccountingFile(storagePath) {
+  if (String(storagePath || '').startsWith('nas:')) return downloadNasFile(String(storagePath).slice(4));
   const url = new URL(`/storage/v1/object/${ACCOUNTING_BUCKET}/${storagePath}`, SUPABASE_URL);
   const res = await fetch(url, {
     headers: {
@@ -3079,6 +3114,7 @@ async function downloadAccountingFile(storagePath) {
 }
 
 async function deleteAccountingFile(storagePath) {
+  if (String(storagePath || '').startsWith('nas:')) return deleteNasFile(String(storagePath).slice(4));
   const url = new URL(`/storage/v1/object/${ACCOUNTING_BUCKET}/${storagePath}`, SUPABASE_URL);
   const res = await fetch(url, {
     method: 'DELETE',
@@ -3098,6 +3134,66 @@ function extensionForMime(mimeType) {
     'image/png': 'png',
     'image/webp': 'webp'
   }[mimeType] || 'bin';
+}
+
+function safeFolderName(value, fallback) {
+  return safeFilename(String(value || '').trim()) || fallback;
+}
+
+async function buildNasDocumentPath(storagePath) {
+  const path = String(storagePath || '').replace(/^\/+|\/+$/g, '');
+  const parts = path.split('/');
+  const travellerMatch = path.match(/^(?:agency-travellers|travellers)\/[^/]+\/([0-9a-f-]{36})\/(.+)$/i);
+  const reservationMatch = path.match(/^(?:agency-reservations|admin-reservations)\/[^/]+\/([0-9a-f-]{36})\/(.+)$/i);
+
+  if (travellerMatch) {
+    const travellerId = travellerMatch[1];
+    const traveller = (await supa('travellers', { query: { id: `eq.${travellerId}`, select: 'id,agency_id,reservation_id,first_name,last_name_1,last_name_2', limit: '1' } }))[0];
+    if (!traveller) throw new Error('No se encontró el viajero para organizar su documento en el NAS');
+    return travelerNasPath(traveller, travellerMatch[2]);
+  }
+
+  if (reservationMatch) {
+    const reservation = (await supa('reservations', { query: { id: `eq.${reservationMatch[1]}`, select: 'id,agency_id,departure_id,reservation_code,lead_traveller_name', limit: '1' } }))[0];
+    if (!reservation) throw new Error('No se encontró la reserva para organizar su documento en el NAS');
+    const { agencyFolder, tripFolder, leadFolder } = await reservationNasFolders(reservation);
+    return `${agencyFolder}/${tripFolder}/${leadFolder}/Documentacion de reserva/${reservationMatch[2]}`;
+  }
+
+  const filename = safeFolderName(parts.pop(), 'documento');
+  const category = parts[0] === 'cuentas' ? 'Cuentas' : parts[0] === 'accounting' ? 'Administracion' : 'Documentos';
+  return `_Administracion/${category}/${parts.slice(1).map(part => safeFolderName(part, 'registro')).join('/')}/${filename}`;
+}
+
+async function travelerNasPath(traveller, storedFilename) {
+  return `${await travelerNasDirectory(traveller)}/${storedFilename}`;
+}
+
+async function travelerNasDirectory(traveller) {
+  if (!traveller.reservation_id) throw new Error('El viajero no está asociado a una reserva; no se puede organizar su documento en el NAS');
+  const reservation = (await supa('reservations', { query: { id: `eq.${traveller.reservation_id}`, select: 'id,agency_id,departure_id,reservation_code,lead_traveller_name', limit: '1' } }))[0];
+  if (!reservation) throw new Error('No se encontró la reserva asociada al viajero');
+  const { agencyFolder, tripFolder, leadFolder } = await reservationNasFolders(reservation);
+  const travellerName = [traveller.first_name, traveller.last_name_1, traveller.last_name_2].filter(Boolean).join(' ');
+  const identity = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('es');
+  const sameAsLead = identity(travellerName) === identity(reservation.lead_traveller_name);
+  const personFolder = sameAsLead
+    ? `${leadFolder}/DNI`
+    : `${leadFolder}/Otros viajeros/${safeFolderName(travellerName, 'Viajero')}-${traveller.id.slice(0, 8)}/DNI`;
+  return `${agencyFolder}/${tripFolder}/${personFolder}`;
+}
+
+async function reservationNasFolders(reservation) {
+  const agency = (await supa('agencies', { query: { id: `eq.${reservation.agency_id}`, select: 'agency_code,commercial_name', limit: '1' } }))[0];
+  const departure = reservation.departure_id
+    ? (await supa('departures', { query: { id: `eq.${reservation.departure_id}`, select: 'departure_code,trip_name', limit: '1' } }))[0]
+    : null;
+  if (!agency || !departure) throw new Error('Faltan los datos de agencia o viaje para organizar el documento en el NAS');
+  return {
+    agencyFolder: `${safeFolderName(agency.agency_code, 'Agencia')}-${safeFolderName(agency.commercial_name, 'Agencia')}`,
+    tripFolder: `${safeFolderName(departure.departure_code, 'Viaje')}-${safeFolderName(departure.trip_name, 'Viaje')}`,
+    leadFolder: `${safeFolderName(reservation.lead_traveller_name, 'Titular')}-${safeFolderName(reservation.reservation_code, 'Reserva')}`
+  };
 }
 
 function accountingExportRow(row) {

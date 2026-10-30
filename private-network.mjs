@@ -1,51 +1,106 @@
-import {spawn} from 'node:child_process';
-import {writeFile,unlink,access} from 'node:fs/promises';
-import {request} from 'node:http';
+import { spawn } from 'node:child_process';
+import { access, unlink, writeFile } from 'node:fs/promises';
 
-const env={...process.env};
+const env = { ...process.env };
+const PRIVATE_NETWORK_ENABLED = env.PRIVATE_NETWORK_ENABLED === 'true';
+const AUTH_KEY = env.TS_AUTHKEY;
 delete env.TS_AUTHKEY;
-const app=spawn(process.execPath,['src/server.mjs'],{stdio:'inherit',env});
+
 let daemon;
-for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{app.kill(signal);daemon?.kill(signal);});
-app.on('exit',code=>{daemon?.kill('SIGTERM');process.exit(code??1);});
+let app;
+let shuttingDown = false;
 
-function run(command,args,timeout=60000){
-  return new Promise((resolve,reject)=>{
-    const child=spawn(command,args,{stdio:'ignore',env});
-    const timer=setTimeout(()=>{child.kill();reject(new Error('timeout'));},timeout);
-    child.once('error',()=>{clearTimeout(timer);reject(new Error('start failed'));});
-    child.once('exit',code=>{clearTimeout(timer);code===0?resolve():reject(new Error('command failed'));});
-  });
+function stop(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  app?.kill(signal);
+  daemon?.kill(signal);
 }
-function probe(target){
-  return new Promise((resolve,reject)=>{
-    const req=request({hostname:'127.0.0.1',port:1055,path:target,method:'GET',headers:{Host:new URL(target).host},timeout:10000},res=>{
-      let body='';res.on('data',chunk=>{if(body.length<1024)body+=chunk;});
-      res.on('end',()=>res.statusCode===200&&body.trim()==='proyekta-nas-ready'?resolve():reject(new Error('unexpected response')));
+
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => stop(signal));
+
+function run(command, args, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: 'inherit', env });
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`${command} timed out`));
+    }, timeoutMs);
+    child.once('error', error => {
+      clearTimeout(timer);
+      reject(error);
     });
-    req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',reject);req.end();
+    child.once('exit', code => {
+      clearTimeout(timer);
+      code === 0 ? resolve() : reject(new Error(`${command} exited with code ${code}`));
+    });
   });
 }
-async function connect(){
-  const target=process.env.NAS_PROBE_URL;
-  if(!process.env.TS_AUTHKEY||!target)throw new Error('configuration missing');
-  const url=new URL(target);
-  if(url.protocol!=='http:'||!/^100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:[0-9]{1,3})\.(?:[0-9]{1,3})$/.test(url.hostname)||url.port!=='8080'||url.pathname!=='/healthz')throw new Error('unexpected destination');
-  const keyfile='/tmp/proyekta-tailscale-auth';
-  await writeFile(keyfile,process.env.TS_AUTHKEY,{mode:0o600});
-  daemon=spawn('/usr/local/bin/tailscaled',['--tun=userspace-networking','--state=mem:','--socket=/tmp/proyekta-tailscale.sock','--outbound-http-proxy-listen=127.0.0.1:1055'],{stdio:'ignore',env});
-  daemon.on('error',()=>console.error('PROYEKTA_PRIVATE_NETWORK daemon_unavailable'));
-  try{
-    const deadline=Date.now()+15000;
-    for(;;){
-      try{await access('/tmp/proyekta-tailscale.sock');break;}catch{}
-      if(Date.now()>deadline)throw new Error('daemon not ready');
-      await new Promise(resolve=>setTimeout(resolve,100));
-    }
-    await run('/usr/local/bin/tailscale',['--socket=/tmp/proyekta-tailscale.sock','up','--auth-key=file:'+keyfile,'--hostname=proyekta-render','--accept-dns=false','--accept-routes=false','--ssh=false']);
-  }finally{await unlink(keyfile).catch(()=>{});}
-  await probe(target);
-  console.log('PROYEKTA_PRIVATE_NETWORK connected_to_ugreen');
-}
-if(process.env.PRIVATE_NETWORK_ENABLED==='true')connect().catch(()=>console.error('PROYEKTA_PRIVATE_NETWORK connection_not_verified'));
 
+async function waitForSocket(path, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error('Tailscale daemon did not become ready');
+}
+
+async function start() {
+  if (PRIVATE_NETWORK_ENABLED) {
+    try {
+      if (!AUTH_KEY) throw new Error('TS_AUTHKEY no está configurada');
+      const socketPath = '/tmp/proyekta-tailscale.sock';
+      const proxyAddress = '127.0.0.1:1055';
+      const keyPath = '/tmp/proyekta-tailscale-authkey';
+      await writeFile(keyPath, AUTH_KEY, { mode: 0o600 });
+      try {
+        daemon = spawn('/usr/local/bin/tailscaled', [
+          '--tun=userspace-networking',
+          '--state=mem:',
+          `--socket=${socketPath}`,
+          `--outbound-http-proxy-listen=${proxyAddress}`
+        ], { stdio: 'inherit', env });
+        daemon.once('error', error => console.error('Tailscale daemon failed:', error.message));
+        await waitForSocket(socketPath);
+        await run('/usr/local/bin/tailscale', [
+          `--socket=${socketPath}`,
+          'up',
+          `--auth-key=file:${keyPath}`,
+          '--hostname=proyekta-render',
+          '--accept-dns=false',
+          '--accept-routes=false',
+          '--ssh=false'
+        ]);
+      } finally {
+        await unlink(keyPath).catch(() => {});
+      }
+      env.NAS_HTTP_PROXY = `http://${proxyAddress}`;
+      console.log('PROYEKTA_PRIVATE_NETWORK connected');
+    } catch (error) {
+      console.error('PROYEKTA_PRIVATE_NETWORK connection_not_verified:', error.message);
+      daemon?.kill('SIGTERM');
+      daemon = undefined;
+    }
+  }
+
+  app = spawn(process.execPath, ['src/server.mjs'], { stdio: 'inherit', env });
+  app.once('error', error => {
+    console.error('Portal process failed:', error.message);
+    stop('SIGTERM');
+  });
+  app.once('exit', code => {
+    daemon?.kill('SIGTERM');
+    process.exit(code ?? 1);
+  });
+}
+
+start().catch(error => {
+  console.error('Portal startup_failed:', error.message);
+  daemon?.kill('SIGTERM');
+  process.exit(1);
+});
